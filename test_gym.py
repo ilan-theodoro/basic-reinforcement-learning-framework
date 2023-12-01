@@ -10,6 +10,7 @@ env = gym.make("FrozenLake-v1")
 from collections import namedtuple
 import numpy as np
 
+
 class AbstractControl:
     def __init__(self, env, agent, num_episodes=1000, γ=0.9, discrete_scale=40):
         self.env = env
@@ -70,7 +71,7 @@ class MonteCarloControl(AbstractControl):
             G_t = self.γ * G_t + reward
 
             # Initialize Q(s,a) function for the given pair (s,a)
-            if state not in self.Q.keys():
+            if state not in self.N.keys():
                 self.Q[state] = {action: G_t}
                 self.N[state] = {-1: 1, action: 1}
             elif action not in self.Q[state]:
@@ -84,7 +85,8 @@ class MonteCarloControl(AbstractControl):
                 # Increment the counter N(s,a)
                 self.N[state][action] += α
                 # Update the mean for the action-value function Q(s,a)
-                self.Q[state][action] += α * (G_t - self.Q[state][action]) / (self.N[state][action])
+                self.agent.Q_hat.update(state, action, G_t, 0.000000001)
+                #self.Q[state][action] += α * (G_t - self.Q[state][action]) / (self.N[state][action])
 
 
 class QLearningControl(AbstractControl):
@@ -148,13 +150,59 @@ class QLearningControl(AbstractControl):
             # Update the mean for the action-value function Q(s,a)
             self.Q[S][A] += α * (R + self.γ * max_q - self.Q[S][A])
 
+class FunctionApproximation:
+    def __init__(self, n_states, n_actions):
+        self.weights = np.random.randn((n_states + n_actions))
+
+    def __call__(self, state, action):
+        features = np.zeros((self.weights.shape[0]))
+        features[-(action+1)] = 1 # one-hot encoding of the action
+
+        features[:len(state)] = state
+
+        return self.weights.T @ features
+
+    def update(self, state, action, target, α=0.1):
+        pred = self(state, action)
+        self.weights += α * (target - pred) * self.gradient(state, action)
+
+    def gradient(self, *_):
+        return self.weights
+
 class Agent:
-    def __init__(self, N_0=12.0):
+    def __init__(self, N_0=12.0, n_actions=2, use_function_approximation=False):
         self.Q = {}
         self.N = {}
-        self.ϵ_t = lambda s: N_0 / (N_0 + self.N[s][-1])
+        self.ϵ_t = lambda s: N_0 / (N_0 + self.N[s][-1]) if s in self.N else 1
+        self.use_function_approximation = use_function_approximation
+        self.Q_hat = FunctionApproximation(4, n_actions)
+        self.n_actions = n_actions
 
     def act(self, state):
+        """Choose an action based on the current state"""
+        if self.use_function_approximation:
+            return self._act_function_approximation(state)
+        else:
+            return self._act(state)
+
+    def _act_function_approximation(self, state):
+        best_reward = 0
+        action = 0
+        t = np.random.uniform()
+
+        for a in range(self.n_actions):
+            r = self.Q_hat(state, a)
+            if best_reward < r:
+                best_reward = r
+                action = a
+
+        # ϵ-greedy strategy to choose the action
+        if best_reward > 0 and t > self.ϵ_t(state):
+            return action
+        else:
+            return np.random.randint(self.n_actions)
+
+    def _act(self, state):
         best_reward = 0
         action = 0
         t = np.random.uniform()
@@ -169,7 +217,7 @@ class Agent:
         if best_reward > 0 and t > self.ϵ_t(state):
             return action
         else:
-            return np.random.randint(2)
+            return np.random.randint(self.n_actions)
 
 
 from multiprocessing import Pool
@@ -179,15 +227,16 @@ def run(scale, N_0, gamma=0.9):
     # set deterministic random seed
     np.random.seed(0)
     random.seed(0)
-    agent = Agent(N_0=N_0)
     env = gym.make('CartPole-v1')  # , render_mode='human')
-    mccontrol = QLearningControl(env, agent, num_episodes=20_000, γ=gamma, discrete_scale=scale)
+    agent = Agent(N_0=N_0, use_function_approximation=True, n_actions=env.action_space.n)
+    mccontrol = MonteCarloControl(env, agent, num_episodes=20_000, γ=gamma, discrete_scale=scale)
     ma_score = mccontrol.fit()
+    print(agent.Q_hat.weights)
     env.close()
     return scale, N_0, ma_score, len(agent.N)
 
 
-run(30, 5, gamma=0.99)
+run(30, 1, gamma=0.99)
 
 # with Pool(20) as p:
 #     results = p.starmap(run, [(scale, N_0) for scale in [1, 3, 5, 7, 10, 20] for N_0 in [1, 2, 3, 5, 10, 20]])
