@@ -10,7 +10,7 @@ env = gym.make("FrozenLake-v1")
 from collections import namedtuple
 import numpy as np
 
-class MonteCarloControl:
+class AbstractControl:
     def __init__(self, env, agent, num_episodes=1000, γ=0.9, discrete_scale=40):
         self.env = env
         self.agent = agent
@@ -26,6 +26,11 @@ class MonteCarloControl:
         """discretize the state"""
         state = (state * self.discrete_scale).astype(int)
         return tuple(state)
+
+
+class MonteCarloControl:
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def fit(self):
         episodes_rewards = []
