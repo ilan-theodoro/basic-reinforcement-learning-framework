@@ -1,4 +1,5 @@
 from functools import partial
+import random
 
 import numpy as np
 import gymnasium as gym
@@ -9,7 +10,6 @@ env = gym.make("FrozenLake-v1")
 from collections import namedtuple
 import numpy as np
 
-
 class MonteCarloControl:
     def __init__(self, env, agent, num_episodes=1000, γ=0.9, discrete_scale=40):
         self.env = env
@@ -17,6 +17,7 @@ class MonteCarloControl:
         self.num_episodes = num_episodes
         self.discrete_scale = discrete_scale
         self.γ = γ
+        self.α_t = lambda st: 1 / self.N[st[0]][st[1]]
 
         self.Q = agent.Q
         self.N = agent.N
@@ -31,7 +32,7 @@ class MonteCarloControl:
 
         pbar = tqdm(range(self.num_episodes))
         for i_episode in pbar:
-            state, _ = self.env.reset()
+            state, _ = self.env.reset(seed=i_episode)
             returns = []
             total_reward = 0
             while True:
@@ -55,7 +56,7 @@ class MonteCarloControl:
                     break
                 state = new_state
 
-        return np.mean(episodes_rewards[-100:])
+        return np.mean(episodes_rewards[-(self.num_episodes//10):])
 
     def update(self, returns):
         """Feedback the agent with the returns"""
@@ -63,20 +64,22 @@ class MonteCarloControl:
         for t, (state, action, reward) in reversed(list(enumerate(returns))):
             G_t = self.γ * G_t + reward
 
-            # Initialize the Q(s,a) function for the given pair (s,a)
+            # Initialize Q(s,a) function for the given pair (s,a)
             if state not in self.Q.keys():
-                self.Q[state] = {action: 0}
-                self.N[state] = {-1: 0, action: 0}
+                self.Q[state] = {action: G_t}
+                self.N[state] = {-1: 1, action: 1}
             elif action not in self.Q[state]:
-                self.Q[state][action] = 0
-                self.N[state][action] = 0
-
-            # Increment the counter N(s)
-            self.N[state][-1] += 1
-            # Increment the counter N(s,a)
-            self.N[state][action] += 1
-            # Update the mean for the action-value function Q(s,a)
-            self.Q[state][action] += (G_t - self.Q[state][action]) / (self.N[state][action])
+                self.Q[state][action] = G_t
+                self.N[state][action] = 1
+            else:
+                # Get the learning rate
+                α = self.α_t((state, action))
+                # Increment the counter N(s)
+                self.N[state][-1] += α
+                # Increment the counter N(s,a)
+                self.N[state][action] += α
+                # Update the mean for the action-value function Q(s,a)
+                self.Q[state][action] += α * (G_t - self.Q[state][action]) / (self.N[state][action])
 
 
 class Agent:
@@ -106,16 +109,19 @@ class Agent:
 from multiprocessing import Pool
 
 
-def run(scale, N_0):
+def run(scale, N_0, gamma=0.9):
+    # set deterministic random seed
+    np.random.seed(0)
+    random.seed(0)
     agent = Agent(N_0=N_0)
     env = gym.make('CartPole-v1')  # , render_mode='human')
-    mccontrol = MonteCarloControl(env, agent, num_episodes=20_000, γ=1)
+    mccontrol = MonteCarloControl(env, agent, num_episodes=100_000, γ=gamma, discrete_scale=scale)
     ma_score = mccontrol.fit()
     env.close()
     return scale, N_0, ma_score, len(agent.N)
 
 
-run(7, 1)
+run(7, 10)
 
 # with Pool(20) as p:
 #     results = p.starmap(run, [(scale, N_0) for scale in [1, 3, 5, 7, 10, 20] for N_0 in [1, 2, 3, 5, 10, 20]])
