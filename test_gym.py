@@ -1,20 +1,55 @@
+from functools import partial
+
 import numpy as np
-import gym
+import gymnasium as gym
+
 env = gym.make("FrozenLake-v1")
 
 from collections import namedtuple
 import numpy as np
 
+
 class MonteCarloControl:
-    def __init__(self, num_episodes=1000):
+    def __init__(self, env, agent, num_episodes=1000):
         self.env = env
-        self.Q = np.zeros((self.env.observation_space.n, self.env.action_space.n))
-        self.returns = np.zeros((self.env.observation_space.n, self.env.action_space.n))
-        self.π = np.zeros(self.env.observation_space.n)
-        self.γ = 0.9
-        self.ε = 0.1
-        self.α = 0.1
-        self.num_episodes = num_episodes
+        self.agent = agent
+        # self.Q = np.zeros((self.env.observation_space.n, self.env.action_space.n))
+        # self.returns = np.zeros((self.env.observation_space.n, self.env.action_space.n))
+        # self.π = np.zeros(self.env.observation_space.n)
+        # self.γ = 0.9
+        # self.ε = 0.1
+        # self.α = 0.1
+        # self.num_episodes = num_episodes
+
+    def fit(self):
+        score_List = []
+        percent_new = []
+        for i_episode in range(5000):
+            state, _ = self.env.reset()
+            while True:
+                # uncomment next line for graphics
+                # env.render()
+                action = self.agent.act(state)  # TO DO: select action
+                new_state, reward, done, _, info = self.env.step(action)
+                # memorize step
+                self.agent.get_states(state, action, reward)
+                if done:
+                    new, old = self.agent.feedback_episode()
+                    score = len(self.agent.episode_memory)
+                    score_List.append(score)
+                    self.agent.reset_memory()
+                    percent_new.append(new * 100. / (new + old))
+                    if (len(percent_new) > 20):
+                        mean = np.array(percent_new)[-20:].mean()
+                        std = np.array(percent_new)[-20:].std()
+                    else:
+                        mean = 100.
+                        std = 0.
+                    print("Score for episode {:3d}: {:3d},    {:3.2f}% +- {:2.2f} of new moves"
+                          .format(i_episode, score, mean, std),
+                          end='\n')
+                    break
+                state = new_state
 
     def run(self):
         self.reset()
@@ -46,102 +81,85 @@ class MonteCarloControl:
                 action = self.π[state]
                 state_action_pairs.append
 
+
 class Agent:
-   def __init__(self, scale=40, explore=10.):
-      self.full_memory = {}  # format : {(state, action): [count, score]}
-      self.episode_memory = []  # Record the current memory
-      self.action_value = {}  # evaluate the actions by states (to discretize)
-      self.experience = namedtuple("experience", ["state", "action", "reward"])
-      self.scale = scale
-      self.new = 0
-      self.old = 0
-      self.explore = explore
+    def __init__(self, scale=40, N_0=12.0):
+        self.N_s_a = {}  # format : {state: action: [count, score]}
+        self.N_s = {}    # format : {state: count}
+        self.episode_memory = []  # Record the current memory
+        self.action_value = {}  # evaluate the actions by states (to discretize)
+        self.experience = namedtuple("experience", ["state", "action", "reward"])
+        self.scale = scale
+        self.new = 0
+        self.old = 0
+        self.ϵ_t = lambda s: N_0 / (N_0 + self.N_s[s])
 
-   # Methods
+    # Methods
 
-   def _discretize(self, state):
-      '''discretize the state and actions'''
-      state = (state * self.scale).astype(int)
-      return tuple(state)
+    def _discretize(self, state):
+        '''discretize the state and actions'''
+        state = (state * self.scale).astype(int)
+        return tuple(state)
 
-   def get_states(self, state, action, reward):
-      '''
+    def get_states(self, state, action, reward):
+        '''
       Add the current (state, action, reward) tuple to the agent episode memory
       values are discretized
       '''
-      state = self._discretize(state)
-      exp = self.experience(state, action, reward)
-      self.episode_memory.append(exp)
+        state = self._discretize(state)
+        exp = self.experience(state, action, reward)
+        self.episode_memory.append(exp)
 
-   def reset_memory(self):
-      self.episode_memory = []
+    def reset_memory(self):
+        self.episode_memory = []
 
-   def feedback_episode(self):
+    def feedback_episode(self):
 
-      # update full memory
-      episode_length = len(self.episode_memory)
-      for i, sa_pair in enumerate(self.episode_memory):
-         state, action, _ = sa_pair
-         if (state, action) in self.full_memory.keys():
-            count, score = self.full_memory[(state, action)]
-            score = ((count * score) + (episode_length - i)) / (count + 1)
-            count += 1
-            self.full_memory[(state, action)] = [count, score]
-         else:
-            count = 1
-            score = episode_length - i
-            self.full_memory[(state, action)] = [count, score]
-      # Returns the number of new and old entries in memory, then reset
-      proportion = (self.new, self.old)
-      self.new, self.old = 0, 0
-      return proportion
-
-   def act(self, state):
-      state = self._discretize(state)
-      best_score = 0
-      t = np.random.uniform()
-      for key, value in self.full_memory.items():
-         if (state == key[0]) and (best_score < value[1]):
-            best_score = value[1]
-            action = key[1]
-      if (best_score > 0) and (t > self.explore / best_score):
-         self.old += 1
-         return action
-      else:
-         self.new += 1
-         return np.random.randint(2)
-
-
-agent = Agent(scale=12, explore=14.)
-env = gym.make('CartPole-v1')
-#agent.full_memory = save_mem
-score_List = []
-percent_new = []
-for i_episode in range(5000):
-    state, _ = env.reset()
-    while True:
-        # uncomment next line for graphics
-        # env.render()
-        action = agent.act(state) # TO DO: select action
-        new_state, reward, done, _, info = env.step(action)
-        # memorize step
-        agent.get_states(state, action, reward)
-        if done:
-            new, old = agent.feedback_episode()
-            score = len(agent.episode_memory)
-            score_List.append(score)
-            agent.reset_memory()
-            percent_new.append(new*100./(new + old))
-            if(len(percent_new) > 20):
-                mean = np.array(percent_new)[-20:].mean()
-                std = np.array(percent_new)[-20:].std()
+        # update full memory
+        episode_length = len(self.episode_memory)
+        for i, sa_pair in enumerate(self.episode_memory):
+            state, action, _ = sa_pair
+            if state in self.N_s_a.keys() and action in self.N_s_a[state]:
+                count, score = self.N_s_a[state][action]
+                score = ((count * score) + (episode_length - i)) / (count + 1)
+                count += 1
+                self.N_s[state] = count
+                self.N_s_a[state][action] = [count, score]
             else:
-                mean = 100.
-                std = 0.
-            print("Score for episode {:3d}: {:3d},    {:3.2f}% +- {:2.2f} of new moves"
-                  .format(i_episode, score, mean, std),
-                  end='\r')
-            break
-        state = new_state
+                count = 1
+                score = episode_length - i
+                self.N_s[state] = count
+                if self.N_s_a.get(state) is not None:
+                    self.N_s_a[state][action] = [count, score]
+                else:
+                    self.N_s_a[state] = {action: [count, score]}
+        # Returns the number of new and old entries in memory, then reset
+        proportion = (self.new, self.old)
+        self.new, self.old = 0, 0
+        return proportion
+
+    def act(self, state):
+        state = self._discretize(state)
+        best_score = 0
+        action = 0
+        t = np.random.uniform()
+
+        if self.N_s_a.get(state) is not None:
+            for key, value in self.N_s_a[state].items():
+                if best_score < value[1]:
+                    best_score = value[1]
+                    action = key
+
+        if best_score > 0 and t > self.ϵ_t(state):
+            self.old += 1
+            return action
+        else:
+            self.new += 1
+            return np.random.randint(2)
+
+
+agent = Agent(scale=6, N_0=40.)
+env = gym.make('CartPole-v1')#, render_mode='human')
+mccontrol = MonteCarloControl(env, agent)
+mccontrol.fit()
 env.close()
-print("Last score: {}".format(score_List[-1]))
