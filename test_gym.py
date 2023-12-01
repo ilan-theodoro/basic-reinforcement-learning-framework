@@ -2,6 +2,7 @@ from functools import partial
 
 import numpy as np
 import gymnasium as gym
+from tqdm import tqdm
 
 env = gym.make("FrozenLake-v1")
 
@@ -10,156 +11,114 @@ import numpy as np
 
 
 class MonteCarloControl:
-    def __init__(self, env, agent, num_episodes=1000):
+    def __init__(self, env, agent, num_episodes=1000, γ=0.9, discrete_scale=40):
         self.env = env
         self.agent = agent
-        # self.Q = np.zeros((self.env.observation_space.n, self.env.action_space.n))
-        # self.returns = np.zeros((self.env.observation_space.n, self.env.action_space.n))
-        # self.π = np.zeros(self.env.observation_space.n)
-        # self.γ = 0.9
-        # self.ε = 0.1
-        # self.α = 0.1
-        # self.num_episodes = num_episodes
+        self.num_episodes = num_episodes
+        self.discrete_scale = discrete_scale
+        self.γ = γ
+
+        self.Q = agent.Q
+        self.N = agent.N
+
+    def _discretize(self, state):
+        """discretize the state"""
+        state = (state * self.discrete_scale).astype(int)
+        return tuple(state)
 
     def fit(self):
-        score_List = []
-        percent_new = []
-        for i_episode in range(5000):
+        episodes_rewards = []
+
+        pbar = tqdm(range(self.num_episodes))
+        for i_episode in pbar:
             state, _ = self.env.reset()
+            returns = []
+            total_reward = 0
             while True:
-                # uncomment next line for graphics
-                # env.render()
-                action = self.agent.act(state)  # TO DO: select action
+                if not np.issubdtype(state.dtype, np.integer):
+                    state = self._discretize(state)
+                action = self.agent.act(state)
+
                 new_state, reward, done, _, info = self.env.step(action)
-                # memorize step
-                self.agent.get_states(state, action, reward)
+                returns.append((state, action, reward))
+                total_reward += reward
+
                 if done:
-                    new, old = self.agent.feedback_episode()
-                    score = len(self.agent.episode_memory)
-                    score_List.append(score)
-                    self.agent.reset_memory()
-                    percent_new.append(new * 100. / (new + old))
-                    if (len(percent_new) > 20):
-                        mean = np.array(percent_new)[-20:].mean()
-                        std = np.array(percent_new)[-20:].std()
-                    else:
-                        mean = 100.
-                        std = 0.
-                    print("Score for episode {:3d}: {:3d},    {:3.2f}% +- {:2.2f} of new moves"
-                          .format(i_episode, score, mean, std),
-                          end='\n')
+                    self.update(returns)
+
+                    episodes_rewards.append(total_reward)
+                    moving_average = np.mean(episodes_rewards[-100:])
+
+                    pbar.set_description(f"Total reward for episode {i_episode:3d}: {total_reward}, "
+                                         f"moving average: {moving_average:.2f}, states explored: {len(self.N)}",
+                                         refresh=False)
                     break
                 state = new_state
 
-    def run(self):
-        self.reset()
-        for i in range(self.num_episodes):
-            state_action_pairs = self.run_episode()
-            G = self.compute_returns(state_action_pairs)
-            self.update_policy(G)
+        return np.mean(episodes_rewards[-100:])
 
-        π_star = np.argmax(self.Q, axis=1)
+    def update(self, returns):
+        """Feedback the agent with the returns"""
+        G_t = 0
+        for t, (state, action, reward) in reversed(list(enumerate(returns))):
+            G_t = self.γ * G_t + reward
 
-        return self.Q, π_star
+            # Initialize the Q(s,a) function for the given pair (s,a)
+            if state not in self.Q.keys():
+                self.Q[state] = {action: 0}
+                self.N[state] = {-1: 0, action: 0}
+            elif action not in self.Q[state]:
+                self.Q[state][action] = 0
+                self.N[state][action] = 0
 
-    # def update(self, state, action, reward):
-    #     self.returns[state[0], state[1], action] += reward
-    #     self.Q[state[0], state[1], action] = self.returns[state[0], state[1], action] / self.π[state[0], state[1], action]
-    #
-    def run_episode(self):
-        self.env.reset()
-
-        done = False
-        state = self.env.current_position
-        action = self.π[state]
-
-        state_action_pairs = [(state, action, 0)]
-
-        while not done:
-            state, reward, done = self.env.step(action)
-            if not done:
-                action = self.π[state]
-                state_action_pairs.append
+            # Increment the counter N(s)
+            self.N[state][-1] += 1
+            # Increment the counter N(s,a)
+            self.N[state][action] += 1
+            # Update the mean for the action-value function Q(s,a)
+            self.Q[state][action] += (G_t - self.Q[state][action]) / (self.N[state][action])
 
 
 class Agent:
-    def __init__(self, scale=40, N_0=12.0):
-        self.N_s_a = {}  # format : {state: action: [count, score]}
-        self.N_s = {}    # format : {state: count}
-        self.episode_memory = []  # Record the current memory
-        self.action_value = {}  # evaluate the actions by states (to discretize)
-        self.experience = namedtuple("experience", ["state", "action", "reward"])
-        self.scale = scale
-        self.new = 0
-        self.old = 0
-        self.ϵ_t = lambda s: N_0 / (N_0 + self.N_s[s])
-
-    # Methods
-
-    def _discretize(self, state):
-        '''discretize the state and actions'''
-        state = (state * self.scale).astype(int)
-        return tuple(state)
-
-    def get_states(self, state, action, reward):
-        '''
-      Add the current (state, action, reward) tuple to the agent episode memory
-      values are discretized
-      '''
-        state = self._discretize(state)
-        exp = self.experience(state, action, reward)
-        self.episode_memory.append(exp)
-
-    def reset_memory(self):
-        self.episode_memory = []
-
-    def feedback_episode(self):
-
-        # update full memory
-        episode_length = len(self.episode_memory)
-        for i, sa_pair in enumerate(self.episode_memory):
-            state, action, _ = sa_pair
-            if state in self.N_s_a.keys() and action in self.N_s_a[state]:
-                count, score = self.N_s_a[state][action]
-                score = ((count * score) + (episode_length - i)) / (count + 1)
-                count += 1
-                self.N_s[state] = count
-                self.N_s_a[state][action] = [count, score]
-            else:
-                count = 1
-                score = episode_length - i
-                self.N_s[state] = count
-                if self.N_s_a.get(state) is not None:
-                    self.N_s_a[state][action] = [count, score]
-                else:
-                    self.N_s_a[state] = {action: [count, score]}
-        # Returns the number of new and old entries in memory, then reset
-        proportion = (self.new, self.old)
-        self.new, self.old = 0, 0
-        return proportion
+    def __init__(self, N_0=12.0):
+        self.Q = {}
+        self.N = {}
+        self.ϵ_t = lambda s: N_0 / (N_0 + self.N[s][-1])
 
     def act(self, state):
-        state = self._discretize(state)
-        best_score = 0
+        best_reward = 0
         action = 0
         t = np.random.uniform()
 
-        if self.N_s_a.get(state) is not None:
-            for key, value in self.N_s_a[state].items():
-                if best_score < value[1]:
-                    best_score = value[1]
-                    action = key
+        if self.Q.get(state) is not None:
+            for a, r in self.Q[state].items():
+                if best_reward < r:
+                    best_reward = r
+                    action = a
 
-        if best_score > 0 and t > self.ϵ_t(state):
-            self.old += 1
+        # ϵ-greedy strategy to choose the action
+        if best_reward > 0 and t > self.ϵ_t(state):
             return action
         else:
-            self.new += 1
             return np.random.randint(2)
 
 
-agent = Agent(scale=6, N_0=40.)
-env = gym.make('CartPole-v1')#, render_mode='human')
-mccontrol = MonteCarloControl(env, agent)
-mccontrol.fit()
-env.close()
+from multiprocessing import Pool
+
+
+def run(scale, N_0):
+    agent = Agent(N_0=N_0)
+    env = gym.make('CartPole-v1')  # , render_mode='human')
+    mccontrol = MonteCarloControl(env, agent, num_episodes=20_000, γ=1)
+    ma_score = mccontrol.fit()
+    env.close()
+    return scale, N_0, ma_score, len(agent.N)
+
+
+run(7, 1)
+
+# with Pool(20) as p:
+#     results = p.starmap(run, [(scale, N_0) for scale in [1, 3, 5, 7, 10, 20] for N_0 in [1, 2, 3, 5, 10, 20]])
+#
+#     for (scale, N_0, ma_score, exp) in results:
+#         print(f"scale: {scale}, N_0: {N_0}, ma_score: {np.mean(ma_score):.2f}, exp: {exp}")
