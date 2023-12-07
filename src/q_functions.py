@@ -147,7 +147,7 @@ class QDeep(QAbstractApproximation):
         self.q_tabular.update(state, action, 0, None, α)
         self.accum_s.append(state)
         self.accum_a.append(action)
-        self.accum_y.append(expected)
+        self.accum_y.append(expected.detach())
 
         self.accumulator += 1
         if self.accumulator % 100 == 0:
@@ -155,7 +155,7 @@ class QDeep(QAbstractApproximation):
             y = torch.tensor(self.accum_y, dtype=torch.float)
             a = torch.tensor(self.accum_a, dtype=torch.long)
             y_pred = self.model(x)[np.arange(100), a]
-            loss = torch.nn.functional.l1_loss(y_pred, y)
+            loss = torch.nn.functional.mse_loss(y_pred, y)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -165,3 +165,6 @@ class QDeep(QAbstractApproximation):
             self.accum_a = []
             self.accum_s = []
             self.accum_y = []
+
+            return loss.detach().item()
+        return None

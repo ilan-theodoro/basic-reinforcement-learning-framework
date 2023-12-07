@@ -29,7 +29,9 @@ class AbstractControl(ABC):
                 returns.append((state, action, reward))
                 total_reward += reward
 
-                self.update_on_step(state, action, reward, state_prime)
+                loss_updated = self.update_on_step(state, action, reward, state_prime)
+                if loss_updated is not None:
+                    pbar.set_postfix(loss=loss_updated)
 
                 if done or truncated:
                     self.update_on_episode_end(returns)
@@ -70,7 +72,7 @@ class MonteCarloControl(AbstractControl):
 
             predicted = self.q_function(state, action)
             # Update the mean for the action-value function Q(s,a)
-            self.q_function.update(state, action, G_t, predicted, self.α_t(state, action))
+            return self.q_function.update(state, action, G_t, predicted, self.α_t(state, action))
 
 
 class QLearningControl(AbstractControl):
@@ -84,7 +86,7 @@ class QLearningControl(AbstractControl):
 
         expected = R + self.γ * max_q
         predicted = self.q_function(S, A)
-        self.q_function.update(S, A, expected, predicted, self.α_t(S, A))
+        return self.q_function.update(S, A, expected, predicted, self.α_t(S, A))
 
     def update_on_episode_end(self, *_):
         pass
