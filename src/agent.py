@@ -14,7 +14,7 @@ class Agent:
 
         # ϵ-greedy strategy to choose the action
         t = np.random.uniform()
-        if best_reward > 0 and t > self.ϵ_t(state):
+        if best_reward > 0 and t > 0.95:#self.ϵ_t(state):
             return action
         else:
             return np.random.randint(self.n_actions)

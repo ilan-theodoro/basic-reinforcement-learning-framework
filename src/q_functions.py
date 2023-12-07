@@ -3,6 +3,8 @@ import random
 import numpy as np
 from abc import ABC, abstractmethod
 
+import torch
+
 
 class QTabular:
     def __init__(self, n_actions, discrete_scale=40):
@@ -93,7 +95,7 @@ class QAbstractApproximation(ABC):
 
 
 class QLinear(QAbstractApproximation):
-    def __init__(self, n_actions, base_lr=0.01, **kwargs):
+    def __init__(self, n_actions, base_lr=0.0001, **kwargs):
         super().__init__(n_actions, **kwargs)
         self.base_lr = base_lr
         self.weights = np.zeros((self.n_actions, 4))
@@ -110,3 +112,56 @@ class QLinear(QAbstractApproximation):
 
         #y_pred = self(state, action)
         self.weights[action] += α * (expected - predicted) * np.asarray(state)
+
+
+class MLP(torch.nn.Module):
+    def __init__(self, n_states, n_actions):
+        super().__init__()
+        self.model = torch.nn.Sequential(torch.nn.Linear(n_states, 16, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(16, 32, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(32, 16, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(16, n_actions, bias=True))
+
+    def forward(self, x):
+        return self.model(x)
+
+class QDeep(QAbstractApproximation):
+    def __init__(self, n_states, n_actions, **kwargs):
+        super().__init__(n_actions, **kwargs)
+
+        self.model = MLP(n_states, n_actions)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.00001)
+        self.accumulator = 0
+        self.accum_s = []
+        self.accum_a = []
+        self.accum_y = []
+
+        from ema_pytorch import EMA
+        self.ema = EMA(self.model)
+
+    def __call__(self, state, action):
+        x = torch.tensor(state, dtype=torch.float)
+        return self.ema(x)[action]
+
+    def update(self, state, action, expected, _, α=0.1):
+        self.q_tabular.update(state, action, 0, None, α)
+        self.accum_s.append(state)
+        self.accum_a.append(action)
+        self.accum_y.append(expected)
+
+        self.accumulator += 1
+        if self.accumulator % 100 == 0:
+            x = torch.tensor(self.accum_s, dtype=torch.float)
+            y = torch.tensor(self.accum_y, dtype=torch.float)
+            a = torch.tensor(self.accum_a, dtype=torch.long)
+            y_pred = self.model(x)[np.arange(100), a]
+            loss = torch.nn.functional.l1_loss(y_pred, y)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            self.ema.update()
+
+            self.accum_a = []
+            self.accum_s = []
+            self.accum_y = []
