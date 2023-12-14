@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from scipy import ndimage
 
 
@@ -13,7 +14,8 @@ class Agent:
 
     def act(self, state, current_epoch=1):
         """Choose an action based on the current state"""
-        action, best_reward = self.q_function.q_max(state)
+        with torch.no_grad():
+            action, best_reward = self.q_function.q_max(state)
 
         # ϵ-greedy strategy to choose the action
         t = np.random.uniform()

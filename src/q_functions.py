@@ -1,9 +1,11 @@
 import random
+from numbers import Number
 
 import numpy as np
 from abc import ABC, abstractmethod
 
 import torch
+from multipledispatch import dispatch
 
 
 class QTabular:
@@ -86,9 +88,13 @@ class QAbstractApproximation(ABC):
         self.n_feat = n_feat
         self.q_tabular = QTabular(n_actions, n_feat, discrete_scale)
 
-    @abstractmethod
+    @dispatch(np.ndarray, Number)
     def __call__(self, state, action):
-        pass
+        raise NotImplementedError
+
+    @dispatch(np.ndarray)
+    def __call__(self, state):
+        raise NotImplementedError
 
     @property
     def states_explored(self):
@@ -98,16 +104,11 @@ class QAbstractApproximation(ABC):
         return self.q_tabular.N(state, action)
 
     def q_max(self, state):
-        maximal_value = -np.inf
-        maximal_set = []
-        for action in range(self.n_actions):
-            q_value = self(state, action)
-            if maximal_value < q_value:
-                maximal_value = q_value
-                maximal_set = [action]
-            elif maximal_value == q_value:
-                maximal_set.append(action)
-
+        values = self(state)
+        if isinstance(values, torch.Tensor):
+            values = values.detach().numpy().astype(np.int32)
+        maximal_value = values.max()
+        maximal_set = np.argwhere(values == maximal_value).flatten()
         action = random.choice(maximal_set)
 
         return action, maximal_value
@@ -122,9 +123,15 @@ class QLinear(QAbstractApproximation):
         self.base_lr = base_lr
         self.weights = np.zeros((self.n_actions, 4))
 
+    @dispatch(np.ndarray, Number)
     def __call__(self, state, action):
         x = np.asarray(state)
         return self.weights[action].T @ x
+
+    @dispatch(np.ndarray)
+    def __call__(self, state):
+        x = np.asarray(state)
+        return self.weights.T @ x
 
     def update(self, state, action, expected, predicted, α):
         self.q_tabular.update(state, action, expected, predicted, α)
@@ -162,9 +169,16 @@ class QDeep(QAbstractApproximation):
         from ema_pytorch import EMA
         self.ema = EMA(self.model)
 
+    @dispatch(np.ndarray, Number)
     def __call__(self, state, action):
         x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
         y = self.ema(x)[0, action]
+        return y
+
+    @dispatch(np.ndarray)
+    def __call__(self, state):
+        x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
+        y = self.ema(x)[0]
         return y
 
     def update(self, state, action, expected, _, α=0.1):
