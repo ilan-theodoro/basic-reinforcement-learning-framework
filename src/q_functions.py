@@ -127,6 +127,7 @@ class QLinear(QAbstractApproximation):
         self.q_tabular.update(state, action, expected, predicted, α)
         α *= self.base_lr
 
+        # predicted = self(state, action)
         assert predicted == self(state, action)
 
         #y_pred = self(state, action)
@@ -145,10 +146,10 @@ class MLP(torch.nn.Module):
         return self.model(x)
 
 class QDeep(QAbstractApproximation):
-    def __init__(self, n_states, n_actions, **kwargs):
-        super().__init__(n_actions, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        self.model = MLP(n_states, n_actions)
+        self.model = MLP(self.n_feat, self.n_actions)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
         self.accumulator = 0
         self.accum_s = []
@@ -164,7 +165,7 @@ class QDeep(QAbstractApproximation):
         return y
 
     def update(self, state, action, expected, _, α=0.1):
-        self.q_tabular.update(state, action, expected, None, α)
+        self.q_tabular.update(state, action, expected, _, α)
         self.accum_s.append(state)
         self.accum_a.append(action)
         self.accum_y.append(expected)
