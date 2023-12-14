@@ -7,63 +7,73 @@ import torch
 
 
 class QTabular:
-    def __init__(self, n_actions, discrete_scale=40):
-        self._Q = {}
-        self._N = {}
+    def __init__(self, n_actions, n_feat, discrete_scale=40):
+        assert discrete_scale % 2 == 0, ("discrete_scale must be even, just to prevent possibles bugs that I am too "
+                                         "lazy to check whether they really exist")
+        self.q = np.zeros((*[discrete_scale] * n_feat, n_actions))
+        self.n = np.zeros((*[discrete_scale] * n_feat, n_actions))
+
         self.n_actions = n_actions
         self.discrete_scale = discrete_scale
-        self._states_explored = 0
 
     def __call__(self, state, action):
         state = self._preprocess_state(state)
-        return self._Q[state][action]
+        idx = self._index(state, action)
+        return self.q[idx]
 
     @property
     def states_explored(self):
-        #return len(self._N)
-        return self._states_explored
+        return np.count_nonzero(self.n)
 
     def q_max(self, state):
         state = self._preprocess_state(state)
+        idx_state = self._index(state)
 
         maximal_value = -np.inf
         maximal_set = []
         for action in range(self.n_actions):
-            if maximal_value < self._Q[state][action]:
-                maximal_value = self._Q[state][action]
+            if maximal_value < self.q[idx_state][action]:
+                maximal_value = self.q[idx_state][action]
                 maximal_set = [action]
-            elif maximal_value == self._Q[state][action]:
+            elif maximal_value == self.q[idx_state][action]:
                 maximal_set.append(action)
 
         action = random.choice(maximal_set)
 
         return action, maximal_value
 
-    def update(self, state, action, expected, _, α):
+    def update(self, state, action, expected, predicted, α):
         state = self._preprocess_state(state)
-        if self._N[state][action] == 0:
-            self._states_explored += 1
-        self._N[state][-1] += α
-        self._N[state][action] += α
-        self._Q[state][action] += α * expected
+        idx = self._index(state, action)
+        self.n[idx] += α
+        self.q[idx] += α * (expected - predicted)
 
-    def N(self, state, action=-1):
+    def N(self, state, action=None):
         state = self._preprocess_state(state)
-        return self._N[state][action]
+        idx = self._index(state)
+        return np.sum(self.n[idx]) if action is None else self.n[idx][action]
 
     def _preprocess_state(self, state):
         if not np.issubdtype(state.dtype, np.integer):
             state = self._discretize(state)
-        if state not in self._Q:
-            self._Q[state] = {action: 0 for action in range(self.n_actions)}
-            self._N[state] = {action: 0 for action in range(-1, self.n_actions)}
+        #if state not in self._Q:
+        #    self._Q[state] = {action: 0 for action in range(self.n_actions)}
+       #     self._N[state] = {action: 0 for action in range(-1, self.n_actions)}
 
         return state
+
+    def _index(self, state, action=None):
+        state_idx = state + self.discrete_scale // 2
+        if action is None:
+            idx = tuple(state_idx)
+        else:
+            idx = tuple(state_idx) + (action,)
+        return idx
 
     def _discretize(self, state):
         """discretize the state"""
         state = (state * self.discrete_scale).astype(int)
-        return tuple(state)
+        return state
 
 
 class QAbstractApproximation(ABC):
