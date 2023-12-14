@@ -19,9 +19,9 @@ def run(scale, N_0, gamma=0.9):
     #env = BatchRenormalization(env, env.observation_space.shape, discrete_scale=scale)#, render_mode='human')
     n_states = env.observation_space.shape[0]
     #q_function = QDeep(n_states, env.action_space.n, discrete_scale=scale)
-    q_function = QTabular(env.action_space.n, discrete_scale=scale)
+    q_function = QTabular(env.action_space.n, n_states, discrete_scale=scale)
     agent = Agent(q_function, N_0=N_0, n_actions=env.action_space.n)
-    control = MonteCarloControl(env, agent, num_episodes=200_000, γ=gamma)
+    control = QLearningControl(env, agent, num_episodes=200_000, γ=gamma)
     ma_score = control.fit()
     #a = np.array(q_function.state_history)
     #print(np.mean(a, axis=0))
@@ -43,4 +43,4 @@ def run(scale, N_0, gamma=0.9):
 #     print(results)
 
 # run single experiment
-run(30, 3, gamma=1)
+run(50, 1, gamma=0.95)
