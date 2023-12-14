@@ -12,6 +12,7 @@ class QTabular:
         self._N = {}
         self.n_actions = n_actions
         self.discrete_scale = discrete_scale
+        self._states_explored = 0
 
     def __call__(self, state, action):
         state = self._preprocess_state(state)
@@ -19,7 +20,8 @@ class QTabular:
 
     @property
     def states_explored(self):
-        return len(self._N)
+        #return len(self._N)
+        return self._states_explored
 
     def q_max(self, state):
         state = self._preprocess_state(state)
@@ -39,6 +41,8 @@ class QTabular:
 
     def update(self, state, action, expected, _, α):
         state = self._preprocess_state(state)
+        if self._N[state][action] == 0:
+            self._states_explored += 1
         self._N[state][-1] += α
         self._N[state][action] += α
         self._Q[state][action] += α * expected
@@ -130,7 +134,7 @@ class QDeep(QAbstractApproximation):
         super().__init__(n_actions, **kwargs)
 
         self.model = MLP(n_states, n_actions)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.00001)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
         self.accumulator = 0
         self.accum_s = []
         self.accum_a = []
@@ -140,11 +144,12 @@ class QDeep(QAbstractApproximation):
         self.ema = EMA(self.model)
 
     def __call__(self, state, action):
-        x = torch.tensor(state, dtype=torch.float)
-        return self.ema(x)[action]
+        x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
+        y = self.ema(x)[0, action]
+        return y
 
     def update(self, state, action, expected, _, α=0.1):
-        self.q_tabular.update(state, action, 0, None, α)
+        self.q_tabular.update(state, action, expected, None, α)
         self.accum_s.append(state)
         self.accum_a.append(action)
         self.accum_y.append(expected)
@@ -155,7 +160,7 @@ class QDeep(QAbstractApproximation):
             y = torch.tensor(self.accum_y, dtype=torch.float)
             a = torch.tensor(self.accum_a, dtype=torch.long)
             y_pred = self.model(x)[np.arange(100), a]
-            loss = torch.nn.functional.l1_loss(y_pred, y)
+            loss = torch.nn.functional.mse_loss(y_pred, y)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -165,3 +170,6 @@ class QDeep(QAbstractApproximation):
             self.accum_a = []
             self.accum_s = []
             self.accum_y = []
+
+            return loss.detach().item()
+        return None
