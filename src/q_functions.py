@@ -11,11 +11,10 @@ class QTabular:
         assert discrete_scale % 2 == 0, ("discrete_scale must be even, just to prevent possibles bugs that I am too "
                                          "lazy to check whether they really exist")
         self.q = np.zeros((*[discrete_scale] * n_feat, n_actions))
-        self.n = np.zeros((*[discrete_scale] * n_feat, n_actions), dtype=np.int32)
+        self.n = np.zeros((*[discrete_scale] * n_feat, n_actions))
 
         self.n_actions = n_actions
         self.discrete_scale = discrete_scale
-        self._states_explored = 0
 
     def __call__(self, state, action):
         state = self._preprocess_state(state)
@@ -24,8 +23,7 @@ class QTabular:
 
     @property
     def states_explored(self):
-        #return len(self._N)
-        return self._states_explored
+        return np.count_nonzero(self.n)
 
     def q_max(self, state):
         state = self._preprocess_state(state)
@@ -47,8 +45,6 @@ class QTabular:
     def update(self, state, action, expected, predicted, α):
         state = self._preprocess_state(state)
         idx = self._index(state, action)
-        if self.n[idx] == 0:
-            self._states_explored += 1
         self.n[idx] += α
         self.q[idx] += α * (expected - predicted)
 

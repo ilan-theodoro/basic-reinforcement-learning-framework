@@ -4,7 +4,7 @@ import numpy as np
 import gymnasium as gym
 
 from src.agent import Agent
-from src.control import MonteCarloControl, QLearningControl
+from src.control import MonteCarloControl, QLearningControl, SarsaLambdaControl
 from src.environment import EnvironmentDiscretizer, BatchRenormalization
 from src.q_functions import QTabular, QLinear, QDeep
 
@@ -21,7 +21,7 @@ def run(scale, N_0, gamma=0.9):
     #q_function = QDeep(n_states, env.action_space.n, discrete_scale=scale)
     q_function = QTabular(env.action_space.n, n_states, discrete_scale=scale)
     agent = Agent(q_function, N_0=N_0, n_actions=env.action_space.n)
-    control = QLearningControl(env, agent, num_episodes=200_000, γ=gamma)
+    control = SarsaLambdaControl(0.8, env, agent, num_episodes=200_000, γ=gamma)
     ma_score = control.fit()
     #a = np.array(q_function.state_history)
     #print(np.mean(a, axis=0))
@@ -43,4 +43,4 @@ def run(scale, N_0, gamma=0.9):
 #     print(results)
 
 # run single experiment
-run(50, 1, gamma=0.95)
+run(20, 10, gamma=0.9)
