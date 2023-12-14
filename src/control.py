@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from tqdm import tqdm
 
-from src.q_functions import QAbstractApproximation, QTabular
+from src.q_functions import QTabular, QLinear
 
 
 class AbstractControl(ABC):
@@ -24,6 +24,7 @@ class AbstractControl(ABC):
             action = self.agent.act(state, current_epoch=i_episode)
             returns = []
             total_reward = 0
+            self.reset()
             while True:
                 state_prime, reward, done, truncated, info = self.env.step(action)
                 returns.append((state, action, reward))
@@ -58,6 +59,9 @@ class AbstractControl(ABC):
 
     @abstractmethod
     def update_on_episode_end(self, returns):
+        pass
+
+    def reset(self):
         pass
 
 
@@ -104,34 +108,41 @@ class SarsaLambdaControl(AbstractControl):
     def __init__(self, λ, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.λ = λ
-        self.e = np.zeros_like(self.q_function.q) if isinstance(self.q_function, QTabular) else np.zeros_like(self.q_function.q_tabular.q)
+        self.e = {}
+        self.q_old = 0
+        self.z = np.zeros(self.q_function.n_feat)
 
     def update_on_step(self, S, A, R, S_prime, A_prime, done):
         """Feedback the agent with the returns"""
         # Compute the max Q(s',a')
         q_prime = self.q_function(S_prime, A_prime)
-        δ = R + self.γ * q_prime - self.q_function(S, A)
+        q = self.q_function(S, A)
+        δ = R + self.γ * q_prime - q
 
-        self._set_e(S, A, self._get_e(S, A) + 1)
+        s = self.q_function._preprocess_state(S)
+        idx = self.q_function._index(s, A)
+        α = self.α_t(S, A)
 
-        if isinstance(self.q_function, QAbstractApproximation):
-            raise NotImplementedError
-            # self.q_function.update(S, A, R + self.γ * q_prime, self.q_function(S, A), self.α_t(S, A) * self._get_e(s, a))
-            # return self.q_function.update(S, A, expected, predicted, self.α_t(S, A))
+        if isinstance(self.q_function, QLinear):
+            x = np.asarray(S)
+            self.z = self.γ * self.λ * self.z + (1 - α * self.γ * self.λ * self.z.T @ x) * x
+            self.q_function.weights[A] += α * 0.1 * (δ + q - self.q_old) * self.z - α * (q - self.q_old) * x
+            self.q_function.q_tabular.n[idx] += 1
+            self.q_old = q_prime
+        elif isinstance(self.q_function, QTabular):
+            if idx not in self.e:
+                self.e[idx] = 0
+            self.e[idx] += 1
+            for idx, e in self.e.items():
+                self.q_function.n[idx] += α * e
+                self.q_function.q[idx] += α * δ * e
+                self.e[idx] *= self.γ * self.λ
         else:
-            self.q_function.n += self.α_t(S, A) * self.e
-            self.q_function.q += self.α_t(S, A) * δ * self.e
-            self.e *= self.γ * self.λ
-
-    def _set_e(self, S, A, value):
-        s = self.q_function._preprocess_state(S)
-        idx = self.q_function._index(s, A)
-        self.e[idx] = value
-
-    def _get_e(self, S, A):
-        s = self.q_function._preprocess_state(S)
-        idx = self.q_function._index(s, A)
-        return self.e[idx]
+            raise NotImplementedError
 
     def update_on_episode_end(self, *_):
         pass
+
+    def reset(self):
+        self.q_old = 0
+        self.z = np.zeros(self.q_function.n_feat)

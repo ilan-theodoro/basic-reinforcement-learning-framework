@@ -10,10 +10,11 @@ class QTabular:
     def __init__(self, n_actions, n_feat, discrete_scale=40):
         assert discrete_scale % 2 == 0, ("discrete_scale must be even, just to prevent possibles bugs that I am too "
                                          "lazy to check whether they really exist")
-        self.q = np.zeros((*[discrete_scale] * n_feat, n_actions))
-        self.n = np.zeros((*[discrete_scale] * n_feat, n_actions))
+        self.q = np.zeros((*[discrete_scale] * n_feat, n_actions), dtype=np.float32)
+        self.n = np.zeros((*[discrete_scale] * n_feat, n_actions), dtype=np.float32)
 
         self.n_actions = n_actions
+        self.n_feat = n_feat
         self.discrete_scale = discrete_scale
 
     def __call__(self, state, action):
@@ -77,9 +78,10 @@ class QTabular:
 
 
 class QAbstractApproximation(ABC):
-    def __init__(self, n_actions, discrete_scale=40):
+    def __init__(self, n_actions, n_feat, discrete_scale=40):
         self.n_actions = n_actions
-        self.q_tabular = QTabular(n_actions, discrete_scale)
+        self.n_feat = n_feat
+        self.q_tabular = QTabular(n_actions, n_feat, discrete_scale)
 
     @abstractmethod
     def __call__(self, state, action):
@@ -107,10 +109,13 @@ class QAbstractApproximation(ABC):
 
         return action, maximal_value
 
+    def __getattr__(self, name):
+        return getattr(self.q_tabular, name)
+
 
 class QLinear(QAbstractApproximation):
-    def __init__(self, n_actions, base_lr=0.0001, **kwargs):
-        super().__init__(n_actions, **kwargs)
+    def __init__(self, base_lr=0.0001, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.base_lr = base_lr
         self.weights = np.zeros((self.n_actions, 4))
 
@@ -119,7 +124,7 @@ class QLinear(QAbstractApproximation):
         return self.weights[action].T @ x
 
     def update(self, state, action, expected, predicted, α):
-        self.q_tabular.update(state, action, 0, None, α)
+        self.q_tabular.update(state, action, expected, predicted, α)
         α *= self.base_lr
 
         assert predicted == self(state, action)
