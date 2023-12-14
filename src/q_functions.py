@@ -15,6 +15,7 @@ class QTabular:
 
         self.n_actions = n_actions
         self.n_feat = n_feat
+        self.count_non_zero = 0
         self.discrete_scale = discrete_scale
 
     def __call__(self, state, action):
@@ -24,7 +25,7 @@ class QTabular:
 
     @property
     def states_explored(self):
-        return np.count_nonzero(self.n)
+        return self.count_non_zero
 
     def q_max(self, state):
         state = self._preprocess_state(state)
@@ -46,6 +47,8 @@ class QTabular:
     def update(self, state, action, expected, predicted, α):
         state = self._preprocess_state(state)
         idx = self._index(state, action)
+        if self.n[idx] == 0:
+            self.count_non_zero += 1
         self.n[idx] += α
         self.q[idx] += α * (expected - predicted)
 
@@ -137,16 +140,15 @@ class QLinear(QAbstractApproximation):
 class MLP(torch.nn.Module):
     def __init__(self, n_states, n_actions):
         super().__init__()
-        self.model = torch.nn.Sequential(torch.nn.Linear(n_states, 16, bias=True), torch.nn.ReLU(),
-                                         torch.nn.Linear(16, 32, bias=True), torch.nn.ReLU(),
-                                         torch.nn.Linear(32, 16, bias=True), torch.nn.ReLU(),
-                                         torch.nn.Linear(16, n_actions, bias=True))
+        self.model = torch.nn.Sequential(torch.nn.Linear(n_states, 128, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(128, 128, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(128, n_actions, bias=True))
 
     def forward(self, x):
         return self.model(x)
 
 class QDeep(QAbstractApproximation):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, batch_size=32, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.model = MLP(self.n_feat, self.n_actions)
@@ -155,6 +157,7 @@ class QDeep(QAbstractApproximation):
         self.accum_s = []
         self.accum_a = []
         self.accum_y = []
+        self.batch_size = batch_size
 
         from ema_pytorch import EMA
         self.ema = EMA(self.model)
@@ -171,11 +174,11 @@ class QDeep(QAbstractApproximation):
         self.accum_y.append(expected)
 
         self.accumulator += 1
-        if self.accumulator % 100 == 0:
+        if self.accumulator % self.batch_size == 0:
             x = torch.tensor(self.accum_s, dtype=torch.float)
             y = torch.tensor(self.accum_y, dtype=torch.float)
             a = torch.tensor(self.accum_a, dtype=torch.long)
-            y_pred = self.model(x)[np.arange(100), a]
+            y_pred = self.model(x)[np.arange(self.batch_size), a]
             loss = torch.nn.functional.mse_loss(y_pred, y)
 
             self.optimizer.zero_grad()

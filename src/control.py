@@ -32,14 +32,14 @@ class ReplayMemory(object):
         return len(self.memory)
 
 class AbstractControl(ABC):
-    def __init__(self, env, agent, num_episodes=1000, γ=0.9):
+    def __init__(self, env, agent, num_episodes=1000, γ=0.9, batch_size=32):
         self.env = env
         self.agent = agent
         self.num_episodes = num_episodes
         self.q_function = agent.q_function
         self.γ = γ
         self.α_t = lambda s, a: 1 / self.q_function.N(s, a) if self.q_function.N(s, a) > 0 else 1
-        self.memory = ReplayMemory(10000)
+        self.memory = ReplayMemory(10000, batch_size)
 
     def fit(self):
         episodes_rewards = []
@@ -57,7 +57,7 @@ class AbstractControl(ABC):
                 total_reward += reward
 
                 action_prime = self.agent.act(state_prime, current_epoch=i_episode)
-                loss_updated = self.update_on_step(state, action, reward, state_prime, action_prime, done)
+                loss_updated = self.update_on_step(state, action, reward, state_prime if not done else None, action_prime, done)
                 if loss_updated is not None:
                     pbar.set_postfix(loss=loss_updated)
 
@@ -99,7 +99,7 @@ class AbstractControl(ABC):
                 s, a, y, _, α = b
                 if isinstance(y, Callable):
                     y = y()
-                updated_batch.append((s, a, y, self.q_function(s, a), α))
+                updated_batch.append((s, a, y, _, α))
 
             for ub in updated_batch:
                 _loss = self.q_function.update(*ub)
@@ -119,7 +119,6 @@ class MonteCarloControl(AbstractControl):
 
     def update_on_episode_end(self, returns):
         """Feedback the agent with the returns"""
-        loss = 0
         G_t = 0
         for t, (state, action, reward) in reversed(list(enumerate(returns))):
             G_t = self.γ * G_t + reward
@@ -163,7 +162,7 @@ class SarsaLambdaControl(AbstractControl):
         """Feedback the agent with the returns"""
         # Compute the max Q(s',a')
         def q_prime(S_prime, A_prime):
-            return lambda: self.q_function(S_prime, A_prime)
+            return lambda: self.q_function(S_prime, A_prime) if S_prime is not None else 0
         q_prime = q_prime(S_prime, A_prime)
 
         def q(S, A):
