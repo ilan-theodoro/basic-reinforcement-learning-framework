@@ -1,19 +1,23 @@
 from abc import ABC, abstractmethod
+from functools import partial
+from typing import Callable
 
 import numpy as np
 from tqdm import tqdm
 
+from src.memory import ReplayMemory
 from src.q_functions import QTabular, QLinear
 
-
 class AbstractControl(ABC):
-    def __init__(self, env, agent, num_episodes=1000, γ=0.9):
+    """Abstract class for control algorithms"""
+    def __init__(self, env, agent, replay_capacity=10000, num_episodes=1000, γ=0.9, batch_size=32):
         self.env = env
         self.agent = agent
         self.num_episodes = num_episodes
         self.q_function = agent.q_function
         self.γ = γ
         self.α_t = lambda s, a: 1 / self.q_function.N(s, a) if self.q_function.N(s, a) > 0 else 1
+        self.memory = ReplayMemory(replay_capacity, batch_size)
 
     def fit(self):
         episodes_rewards = []
@@ -31,7 +35,7 @@ class AbstractControl(ABC):
                 total_reward += reward
 
                 action_prime = self.agent.act(state_prime, current_epoch=i_episode)
-                loss_updated = self.update_on_step(state, action, reward, state_prime, action_prime, done)
+                loss_updated = self.update_on_step(state, action, reward, state_prime if not done else None, action_prime, done)
                 if loss_updated is not None:
                     pbar.set_postfix(loss=loss_updated)
 
@@ -64,6 +68,25 @@ class AbstractControl(ABC):
     def reset(self):
         pass
 
+    def optimize(self):
+        if self.memory.batch_ready:
+            batch = self.memory.sample()
+            loss = 0
+            updated_batch = []
+            for b in batch:
+                s, a, y, _, α = b
+                if isinstance(y, Callable):
+                    y = y()
+                updated_batch.append((s, a, y, _, α))
+
+            for ub in updated_batch:
+                _loss = self.q_function.update(*ub)
+                if _loss is not None:
+                    loss += _loss
+            return loss / len(batch)
+        else:
+            return None
+
 
 class MonteCarloControl(AbstractControl):
     def __init__(self, *args, **kwargs):
@@ -74,17 +97,15 @@ class MonteCarloControl(AbstractControl):
 
     def update_on_episode_end(self, returns):
         """Feedback the agent with the returns"""
-        loss = 0
         G_t = 0
         for t, (state, action, reward) in reversed(list(enumerate(returns))):
             G_t = self.γ * G_t + reward
 
             predicted = self.q_function(state, action)
             # Update the mean for the action-value function Q(s,a)
-            ret = self.q_function.update(state, action, G_t, predicted, self.α_t(state, action))
-            if ret is not None:
-                loss += ret
-        return loss
+            self.memory.push(state, action, G_t, predicted, self.α_t(state, action))
+
+        return self.optimize()
 
 
 class QLearningControl(AbstractControl):
@@ -94,11 +115,14 @@ class QLearningControl(AbstractControl):
     def update_on_step(self, S, A, R, S_prime, _, done):
         """Feedback the agent with the returns"""
         # Compute the max Q(s',a')
-        _, max_q = self.q_function.q_max(S_prime)
+        max_q = partial(self.q_function.q_max, S_prime)
 
-        expected = R + self.γ * max_q if not done else R
-        predicted = self.q_function(S, A)
-        return self.q_function.update(S, A, expected, predicted, self.α_t(S, A))
+        def expected(R, done, max_q):
+            return lambda: R + self.γ * max_q()[1] if not done else R
+
+        self.memory.push(S, A, expected(R, done, max_q), None, self.α_t(S, A))
+
+        return self.optimize()
 
     def update_on_episode_end(self, *_):
         pass
@@ -115,30 +139,57 @@ class SarsaLambdaControl(AbstractControl):
     def update_on_step(self, S, A, R, S_prime, A_prime, done):
         """Feedback the agent with the returns"""
         # Compute the max Q(s',a')
-        q_prime = self.q_function(S_prime, A_prime)
-        q = self.q_function(S, A)
-        δ = R + self.γ * q_prime - q
+        def q_prime(S_prime, A_prime):
+            return lambda: self.q_function(S_prime, A_prime) if S_prime is not None else 0
+        q_prime = q_prime(S_prime, A_prime)
+
+        def q(S, A):
+            return lambda: self.q_function(S, A)
+        q = q(S, A)
+
+        δ = lambda: R + self.γ * q_prime() - q()
 
         s = self.q_function._preprocess_state(S)
         idx = self.q_function._index(s, A)
         α = self.α_t(S, A)
 
+        #self.memory.push(S, A, q_prime, q, δ, self.α_t(S, A))
+
         if isinstance(self.q_function, QLinear):
             x = np.asarray(S)
             self.z = self.γ * self.λ * self.z + (1 - α * self.γ * self.λ * self.z.T @ x) * x
-            self.q_function.weights[A] += α * 0.1 * (δ + q - self.q_old) * self.z - α * (q - self.q_old) * x
+            self.q_function.weights[A] += α * 0.1 * (δ() + q() - self.q_old) * self.z - α * (q() - self.q_old) * x
             self.q_function.q_tabular.n[idx] += 1
-            self.q_old = q_prime
+            self.q_old = q_prime()
         elif isinstance(self.q_function, QTabular):
-            if idx not in self.e:
-                self.e[idx] = 0
-            self.e[idx] += 1
-            for idx, e in self.e.items():
-                self.q_function.n[idx] += α * e
-                self.q_function.q[idx] += α * δ * e
-                self.e[idx] *= self.γ * self.λ
+            self.memory.push(S, A, q_prime, q, δ, self.α_t(S, A))
+            self.optimize()
         else:
             raise NotImplementedError
+
+    def optimize(self):
+        if isinstance(self.q_function, QTabular):
+            if self.memory.batch_ready:
+                batch = self.memory.sample()
+                updated_batch = []
+                for b in batch:
+                    s, a, q_prime, q, δ, α = b
+                    updated_batch.append((s, a, q_prime(), q(), δ(), α))
+
+                for ub in updated_batch:
+                    s, a, q_prime, q, δ, α = ub
+                    s = self.q_function._preprocess_state(s)
+                    idx = self.q_function._index(s, a)
+
+                    if idx not in self.e:
+                        self.e[idx] = 0
+                    self.e[idx] += 1
+                    for idx, e in self.e.items():
+                        self.q_function.n[idx] += α * e
+                        self.q_function.q[idx] += α * δ * e
+                        self.e[idx] *= self.γ * self.λ
+
+        return None
 
     def update_on_episode_end(self, *_):
         pass

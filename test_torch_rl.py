@@ -1,370 +1,203 @@
-from collections import defaultdict
-from typing import Optional
+# BATCH_SIZE is the number of transitions sampled from the replay buffer
+# GAMMA is the discount factor as mentioned in the previous section
+# EPS_START is the starting value of epsilon
+# EPS_END is the final value of epsilon
+# EPS_DECAY controls the rate of exponential decay of epsilon, higher means a slower decay
+# TAU is the update rate of the target network
+# LR is the learning rate of the ``AdamW`` optimizer
 
-import numpy as np
+from tqdm import tqdm
+
+from mo436_final_project.src.src.environment import EnvironmentNormalizer
+
+import math
+import random
+import matplotlib
+import matplotlib.pyplot as plt
+from collections import namedtuple
+from itertools import count
+
 import torch
-import tqdm
-from tensordict.nn import TensorDictModule
-from tensordict.tensordict import TensorDict, TensorDictBase
-from torch import nn
+import torch.nn as nn
+import torch.optim as optim
 
-from torchrl.data import BoundedTensorSpec, CompositeSpec, UnboundedContinuousTensorSpec
-from torchrl.envs import (
-    CatTensors,
-    EnvBase,
-    Transform,
-    TransformedEnv,
-    UnsqueezeTransform,
-)
-from torchrl.envs.transforms.transforms import _apply_to_composite
-from torchrl.envs.utils import check_env_specs, step_mdp
-
-DEFAULT_X = np.pi
-DEFAULT_Y = 1.0
-
-def _step(tensordict):
-    gt, seg = tensordict["gt"], tensordict["seg"]
-
-    th, thdot = tensordict["th"], tensordict["thdot"]  # th := theta
-
-    g_force = tensordict["params", "g"]
-    mass = tensordict["params", "m"]
-    length = tensordict["params", "l"]
-    dt = tensordict["params", "dt"]
-    u = tensordict["action"].squeeze(-1)
-    u = u.clamp(-tensordict["params", "max_torque"], tensordict["params", "max_torque"])
-    costs = angle_normalize(th) ** 2 + 0.1 * thdot**2 + 0.001 * (u**2)
-
-    new_thdot = (
-        thdot
-        + (3 * g_force / (2 * length) * th.sin() + 3.0 / (mass * length**2) * u) * dt
-    )
-    new_thdot = new_thdot.clamp(
-        -tensordict["params", "max_speed"], tensordict["params", "max_speed"]
-    )
-    new_th = th + new_thdot * dt
-    reward = -costs.view(*tensordict.shape, 1)
-    done = torch.zeros_like(reward, dtype=torch.bool)
-    out = TensorDict(
-        {
-            "th": new_th,
-            "thdot": new_thdot,
-            "params": tensordict["params"],
-            "reward": reward,
-            "done": done,
-        },
-        tensordict.shape,
-    )
-    return out
+# if GPU is to be used
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def angle_normalize(x):
-    return ((x + torch.pi) % (2 * torch.pi)) - torch.pi
+
+from mo436_final_project.src.src.control import ReplayMemory
+
+BATCH_SIZE = 128
+GAMMA = 0.99
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 1000
+TAU = 0.005
+LR = 1e-4
+
+env = EnvironmentNormalizer.from_gym('CartPole-v1')
+
+# Get number of actions from gym action space
+n_actions = env.action_space.n
+# Get the number of state observations
+state, info = env.reset()
+n_observations = len(state)
+
+policy_net = DQN(n_observations, n_actions).to(device)
+target_net = DQN(n_observations, n_actions).to(device)
+target_net.load_state_dict(policy_net.state_dict())
+
+optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
+memory = ReplayMemory(10000, BATCH_SIZE)
+
+is_ipython = 'inline' in matplotlib.get_backend()
+if is_ipython:
+    from IPython import display
+
+steps_done = 0
 
 
-def _reset(self, tensordict):
-    if tensordict is None or tensordict.is_empty():
-        # if no ``tensordict`` is passed, we generate a single set of hyperparameters
-        # Otherwise, we assume that the input ``tensordict`` contains all the relevant
-        # parameters to get started.
-        tensordict = self.gen_params(batch_size=self.batch_size)
-
-    high_th = torch.tensor(DEFAULT_X, device=self.device)
-    high_thdot = torch.tensor(DEFAULT_Y, device=self.device)
-    low_th = -high_th
-    low_thdot = -high_thdot
-
-    # for non batch-locked environments, the input ``tensordict`` shape dictates the number
-    # of simulators run simultaneously. In other contexts, the initial
-    # random state's shape will depend upon the environment batch-size instead.
-    th = (
-        torch.rand(tensordict.shape, generator=self.rng, device=self.device)
-        * (high_th - low_th)
-        + low_th
-    )
-    thdot = (
-        torch.rand(tensordict.shape, generator=self.rng, device=self.device)
-        * (high_thdot - low_thdot)
-        + low_thdot
-    )
-    out = TensorDict(
-        {
-            "th": th,
-            "thdot": thdot,
-            "params": tensordict["params"],
-        },
-        batch_size=tensordict.shape,
-    )
-    return out
-
-def _make_spec(self, td_params):
-    # Under the hood, this will populate self.output_spec["observation"]
-    self.observation_spec = CompositeSpec(
-        th=BoundedTensorSpec(
-            low=-torch.pi,
-            high=torch.pi,
-            shape=(),
-            dtype=torch.float32,
-        ),
-        thdot=BoundedTensorSpec(
-            low=-td_params["params", "max_speed"],
-            high=td_params["params", "max_speed"],
-            shape=(),
-            dtype=torch.float32,
-        ),
-        # we need to add the ``params`` to the observation specs, as we want
-        # to pass it at each step during a rollout
-        params=make_composite_from_td(td_params["params"]),
-        shape=(),
-    )
-    # since the environment is stateless, we expect the previous output as input.
-    # For this, ``EnvBase`` expects some state_spec to be available
-    self.state_spec = self.observation_spec.clone()
-    # action-spec will be automatically wrapped in input_spec when
-    # `self.action_spec = spec` will be called supported
-    self.action_spec = BoundedTensorSpec(
-        low=-td_params["params", "max_torque"],
-        high=td_params["params", "max_torque"],
-        shape=(1,),
-        dtype=torch.float32,
-    )
-    self.reward_spec = UnboundedContinuousTensorSpec(shape=(*td_params.shape, 1))
+def select_action(state):
+    global steps_done
+    sample = random.random()
+    eps_threshold = EPS_END + (EPS_START - EPS_END) * \
+        math.exp(-1. * steps_done / EPS_DECAY)
+    steps_done += 1
+    if sample > eps_threshold:
+        with torch.no_grad():
+            # t.max(1) will return the largest column value of each row.
+            # second column on max result is index of where max element was
+            # found, so we pick action with the larger expected reward.
+            return policy_net(state).max(1).indices.view(1, 1)
+    else:
+        return torch.tensor([[env.action_space.sample()]], device=device, dtype=torch.long)
 
 
-def make_composite_from_td(td):
-    # custom function to convert a ``tensordict`` in a similar spec structure
-    # of unbounded values.
-    composite = CompositeSpec(
-        {
-            key: make_composite_from_td(tensor)
-            if isinstance(tensor, TensorDictBase)
-            else UnboundedContinuousTensorSpec(
-                dtype=tensor.dtype, device=tensor.device, shape=tensor.shape
-            )
-            for key, tensor in td.items()
-        },
-        shape=td.shape,
-    )
-    return composite
-
-def _set_seed(self, seed: Optional[int]):
-    rng = torch.manual_seed(seed)
-    self.rng = rng
-
-def gen_params(g=10.0, batch_size=None) -> TensorDictBase:
-    """Returns a ``tensordict`` containing the physical parameters such as gravitational force and torque or speed limits."""
-    if batch_size is None:
-        batch_size = []
-    td = TensorDict(
-        {
-            "params": TensorDict(
-                {
-                    "max_speed": 8,
-                    "max_torque": 2.0,
-                    "dt": 0.05,
-                    "g": g,
-                    "m": 1.0,
-                    "l": 1.0,
-                },
-                [],
-            )
-        },
-        [],
-    )
-    if batch_size:
-        td = td.expand(batch_size).contiguous()
-    return td
-
-class PendulumEnv(EnvBase):
-    metadata = {
-        "render_modes": ["human", "rgb_array"],
-        "render_fps": 30,
-    }
-    batch_locked = False
-
-    def __init__(self, td_params=None, seed=None, device="cpu"):
-        if td_params is None:
-            td_params = self.gen_params()
-
-        super().__init__(device=device, batch_size=[])
-        self._make_spec(td_params)
-        if seed is None:
-            seed = torch.empty((), dtype=torch.int64).random_().item()
-        self.set_seed(seed)
-
-    # Helpers: _make_step and gen_params
-    gen_params = staticmethod(gen_params)
-    _make_spec = _make_spec
-
-    # Mandatory methods: _step, _reset and _set_seed
-    _reset = _reset
-    _step = staticmethod(_step)
-    _set_seed = _set_seed
-
-env = PendulumEnv()
-check_env_specs(env)
-
-env = TransformedEnv(
-    env,
-    # ``Unsqueeze`` the observations that we will concatenate
-    UnsqueezeTransform(
-        unsqueeze_dim=-1,
-        in_keys=["th", "thdot"],
-        in_keys_inv=["th", "thdot"],
-    ),
-)
+episode_durations = []
 
 
-class SinTransform(Transform):
-    def _apply_transform(self, obs: torch.Tensor) -> None:
-        return obs.sin()
+def plot_durations(show_result=False):
+    plt.figure(1)
+    durations_t = torch.tensor(episode_durations, dtype=torch.float)
+    if show_result:
+        plt.title('Result')
+    else:
+        plt.clf()
+        plt.title('Training...')
+    plt.xlabel('Episode')
+    plt.ylabel('Duration')
+    plt.plot(durations_t.numpy())
+    # Take 100 episode averages and plot them too
+    if len(durations_t) >= 100:
+        means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
+        means = torch.cat((torch.zeros(99), means))
+        plt.plot(means.numpy())
 
-    # The transform must also modify the data at reset time
-    def _reset(
-        self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
-    ) -> TensorDictBase:
-        return self._call(tensordict_reset)
-
-    # _apply_to_composite will execute the observation spec transform across all
-    # in_keys/out_keys pairs and write the result in the observation_spec which
-    # is of type ``Composite``
-    @_apply_to_composite
-    def transform_observation_spec(self, observation_spec):
-        return BoundedTensorSpec(
-            low=-1,
-            high=1,
-            shape=observation_spec.shape,
-            dtype=observation_spec.dtype,
-            device=observation_spec.device,
-        )
-
-
-class CosTransform(Transform):
-    def _apply_transform(self, obs: torch.Tensor) -> None:
-        return obs.cos()
-
-    # The transform must also modify the data at reset time
-    def _reset(
-        self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
-    ) -> TensorDictBase:
-        return self._call(tensordict_reset)
-
-    # _apply_to_composite will execute the observation spec transform across all
-    # in_keys/out_keys pairs and write the result in the observation_spec which
-    # is of type ``Composite``
-    @_apply_to_composite
-    def transform_observation_spec(self, observation_spec):
-        return BoundedTensorSpec(
-            low=-1,
-            high=1,
-            shape=observation_spec.shape,
-            dtype=observation_spec.dtype,
-            device=observation_spec.device,
-        )
-
-
-t_sin = SinTransform(in_keys=["th"], out_keys=["sin"])
-t_cos = CosTransform(in_keys=["th"], out_keys=["cos"])
-env.append_transform(t_sin)
-env.append_transform(t_cos)
-
-cat_transform = CatTensors(
-    in_keys=["sin", "cos", "thdot"], dim=-1, out_key="observation", del_keys=False
-)
-env.append_transform(cat_transform)
-
-check_env_specs(env)
-
-def simple_rollout(steps=100):
-    # preallocate:
-    data = TensorDict({}, [steps])
-    # reset
-    _data = env.reset()
-    for i in range(steps):
-        _data["action"] = env.action_spec.rand()
-        _data = env.step(_data)
-        data[i] = _data
-        _data = step_mdp(_data, keep_other=True)
-    return data
-
-
-batch_size = 10  # number of environments to be executed in batch
-td = env.reset(env.gen_params(batch_size=[batch_size]))
-print("reset (batch size of 10)", td)
-td = env.rand_step(td)
-print("rand step (batch size of 10)", td)
-
-rollout = env.rollout(
-    3,
-    auto_reset=False,  # we're executing the reset out of the ``rollout`` call
-    tensordict=env.reset(env.gen_params(batch_size=[batch_size])),
-)
-print("rollout of len 3 (batch size of 10):", rollout)
-
-torch.manual_seed(0)
-env.set_seed(0)
-
-net = nn.Sequential(
-    nn.LazyLinear(64),
-    nn.Tanh(),
-    nn.LazyLinear(64),
-    nn.Tanh(),
-    nn.LazyLinear(64),
-    nn.Tanh(),
-    nn.LazyLinear(1),
-)
-policy = TensorDictModule(
-    net,
-    in_keys=["observation"],
-    out_keys=["action"],
-)
-
-optim = torch.optim.Adam(policy.parameters(), lr=2e-3)
-
-batch_size = 32
-pbar = tqdm.tqdm(range(20_000 // batch_size))
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, 20_000)
-logs = defaultdict(list)
-
-for _ in pbar:
-    init_td = env.reset(env.gen_params(batch_size=[batch_size]))
-    rollout = env.rollout(100, policy, tensordict=init_td, auto_reset=False)
-    traj_return = rollout["next", "reward"].mean()
-    (-traj_return).backward()
-    gn = torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-    optim.step()
-    optim.zero_grad()
-    pbar.set_description(
-        f"reward: {traj_return: 4.4f}, "
-        f"last reward: {rollout[..., -1]['next', 'reward'].mean(): 4.4f}, gradient norm: {gn: 4.4}"
-    )
-    logs["return"].append(traj_return.item())
-    logs["last_reward"].append(rollout[..., -1]["next", "reward"].mean().item())
-    scheduler.step()
-
-
-def plot():
-    import matplotlib
-    from matplotlib import pyplot as plt
-
-    is_ipython = "inline" in matplotlib.get_backend()
+    plt.pause(0.001)  # pause a bit so that plots are updated
     if is_ipython:
-        from IPython import display
-
-    with plt.ion():
-        plt.figure(figsize=(10, 5))
-        plt.subplot(1, 2, 1)
-        plt.plot(logs["return"])
-        plt.title("returns")
-        plt.xlabel("iteration")
-        plt.subplot(1, 2, 2)
-        plt.plot(logs["last_reward"])
-        plt.title("last reward")
-        plt.xlabel("iteration")
-        if is_ipython:
+        if not show_result:
             display.display(plt.gcf())
             display.clear_output(wait=True)
-        plt.show()
+        else:
+            display.display(plt.gcf())
+
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'next_state', 'reward'))
 
 
-plot()
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return
+    transitions = memory.sample()
+    # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+    # detailed explanation). This converts batch-array of Transitions
+    # to Transition of batch-arrays.
+    batch = Transition(*zip(*transitions))
+
+    # Compute a mask of non-final states and concatenate the batch elements
+    # (a final state would've been the one after which simulation ended)
+    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                          batch.next_state)), device=device, dtype=torch.bool)
+    non_final_next_states = torch.cat([s for s in batch.next_state
+                                                if s is not None])
+    state_batch = torch.cat(batch.state)
+    action_batch = torch.cat(batch.action)
+    reward_batch = torch.cat(batch.reward)
+
+    # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
+    # columns of actions taken. These are the actions which would've been taken
+    # for each batch state according to policy_net
+    state_action_values = policy_net(state_batch).gather(1, action_batch)
+
+    # Compute V(s_{t+1}) for all next states.
+    # Expected values of actions for non_final_next_states are computed based
+    # on the "older" target_net; selecting their best reward with max(1).values
+    # This is merged based on the mask, such that we'll have either the expected
+    # state value or 0 in case the state was final.
+    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    with torch.no_grad():
+        next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
+    # Compute the expected Q values
+    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+
+    # Compute Huber loss
+    criterion = nn.SmoothL1Loss()
+    loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+
+    # Optimize the model
+    optimizer.zero_grad()
+    loss.backward()
+    # In-place gradient clipping
+    torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
+    optimizer.step()
+
+
+if torch.cuda.is_available():
+    num_episodes = 2000
+else:
+    num_episodes = 50
+
+pbar = tqdm(range(num_episodes))
+for i_episode in pbar:
+    # Initialize the environment and get it's state
+    state, info = env.reset()
+    state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+    for t in count():
+        action = select_action(state)
+        observation, reward, terminated, truncated, _ = env.step(action.item())
+        reward = torch.tensor([reward], device=device)
+        done = terminated or truncated
+
+        if terminated:
+            next_state = None
+        else:
+            next_state = torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
+
+        # Store the transition in memory
+        memory.push(state, action, next_state, reward)
+
+        # Move to the next state
+        state = next_state
+
+        # Perform one step of the optimization (on the policy network)
+        optimize_model()
+
+        # Soft update of the target network's weights
+        # θ′ ← τ θ + (1 −τ )θ′
+        target_net_state_dict = target_net.state_dict()
+        policy_net_state_dict = policy_net.state_dict()
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+        target_net.load_state_dict(target_net_state_dict)
+
+        if done:
+            episode_durations.append(t + 1)
+            if i_episode % 100 == 0:
+                plot_durations()
+            break
+
+print('Complete')
+plot_durations(show_result=True)
+plt.ioff()
+plt.show()

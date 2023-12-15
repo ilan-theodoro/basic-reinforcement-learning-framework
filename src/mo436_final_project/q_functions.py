@@ -1,9 +1,12 @@
 import random
+from numbers import Number
+from typing import Union
 
 import numpy as np
 from abc import ABC, abstractmethod
 
 import torch
+from multipledispatch import dispatch
 
 
 class QTabular:
@@ -15,6 +18,7 @@ class QTabular:
 
         self.n_actions = n_actions
         self.n_feat = n_feat
+        self.count_non_zero = 0
         self.discrete_scale = discrete_scale
 
     def __call__(self, state, action):
@@ -24,7 +28,7 @@ class QTabular:
 
     @property
     def states_explored(self):
-        return np.count_nonzero(self.n)
+        return self.count_non_zero
 
     def q_max(self, state):
         state = self._preprocess_state(state)
@@ -46,6 +50,8 @@ class QTabular:
     def update(self, state, action, expected, predicted, α):
         state = self._preprocess_state(state)
         idx = self._index(state, action)
+        if self.n[idx] == 0:
+            self.count_non_zero += 1
         self.n[idx] += α
         self.q[idx] += α * (expected - predicted)
 
@@ -83,9 +89,13 @@ class QAbstractApproximation(ABC):
         self.n_feat = n_feat
         self.q_tabular = QTabular(n_actions, n_feat, discrete_scale)
 
-    @abstractmethod
+    @dispatch((torch.Tensor, np.ndarray), Number)
     def __call__(self, state, action):
-        pass
+        raise NotImplementedError
+
+    @dispatch((torch.Tensor, np.ndarray))
+    def __call__(self, state):
+        raise NotImplementedError
 
     @property
     def states_explored(self):
@@ -95,16 +105,11 @@ class QAbstractApproximation(ABC):
         return self.q_tabular.N(state, action)
 
     def q_max(self, state):
-        maximal_value = -np.inf
-        maximal_set = []
-        for action in range(self.n_actions):
-            q_value = self(state, action)
-            if maximal_value < q_value:
-                maximal_value = q_value
-                maximal_set = [action]
-            elif maximal_value == q_value:
-                maximal_set.append(action)
-
+        values = self(state)
+        if isinstance(values, torch.Tensor):
+            values = values.detach().cpu().numpy().astype(np.int32)
+        maximal_value = values.max()
+        maximal_set = np.argwhere(values == maximal_value).flatten()
         action = random.choice(maximal_set)
 
         return action, maximal_value
@@ -119,14 +124,21 @@ class QLinear(QAbstractApproximation):
         self.base_lr = base_lr
         self.weights = np.zeros((self.n_actions, 4))
 
+    @dispatch((torch.Tensor, np.ndarray), Number)
     def __call__(self, state, action):
         x = np.asarray(state)
         return self.weights[action].T @ x
+
+    @dispatch((torch.Tensor, np.ndarray))
+    def __call__(self, state):
+        x = np.asarray(state)
+        return self.weights.T @ x
 
     def update(self, state, action, expected, predicted, α):
         self.q_tabular.update(state, action, expected, predicted, α)
         α *= self.base_lr
 
+        # predicted = self(state, action)
         assert predicted == self(state, action)
 
         #y_pred = self(state, action)
@@ -136,45 +148,52 @@ class QLinear(QAbstractApproximation):
 class MLP(torch.nn.Module):
     def __init__(self, n_states, n_actions):
         super().__init__()
-        self.model = torch.nn.Sequential(torch.nn.Linear(n_states, 16, bias=True), torch.nn.ReLU(),
-                                         torch.nn.Linear(16, 32, bias=True), torch.nn.ReLU(),
-                                         torch.nn.Linear(32, 16, bias=True), torch.nn.ReLU(),
-                                         torch.nn.Linear(16, n_actions, bias=True))
+        self.model = torch.nn.Sequential(torch.nn.Linear(n_states, 128, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(128, 128, bias=True), torch.nn.ReLU(),
+                                         torch.nn.Linear(128, n_actions, bias=True))
 
     def forward(self, x):
         return self.model(x)
 
 class QDeep(QAbstractApproximation):
-    def __init__(self, n_states, n_actions, **kwargs):
-        super().__init__(n_actions, **kwargs)
+    def __init__(self, batch_size=32, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        self.model = MLP(n_states, n_actions)
+        self.model = MLP(self.n_feat, self.n_actions)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
         self.accumulator = 0
         self.accum_s = []
         self.accum_a = []
         self.accum_y = []
+        self.batch_size = batch_size
 
         from ema_pytorch import EMA
         self.ema = EMA(self.model)
 
+    @dispatch((torch.Tensor, np.ndarray), Number)
     def __call__(self, state, action):
         x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
         y = self.ema(x)[0, action]
         return y
 
+    @dispatch((torch.Tensor, np.ndarray))
+    def __call__(self, state):
+        x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
+        y = self.ema(x)[0]
+        return y
+
     def update(self, state, action, expected, _, α=0.1):
-        self.q_tabular.update(state, action, expected, None, α)
+        self.q_tabular.update(state, action, expected, _, α)
         self.accum_s.append(state)
         self.accum_a.append(action)
         self.accum_y.append(expected)
 
         self.accumulator += 1
-        if self.accumulator % 100 == 0:
+        if self.accumulator % self.batch_size == 0:
             x = torch.tensor(self.accum_s, dtype=torch.float)
             y = torch.tensor(self.accum_y, dtype=torch.float)
             a = torch.tensor(self.accum_a, dtype=torch.long)
-            y_pred = self.model(x)[np.arange(100), a]
+            y_pred = self.model(x)[np.arange(self.batch_size), a]
             loss = torch.nn.functional.mse_loss(y_pred, y)
 
             self.optimizer.zero_grad()
