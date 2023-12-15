@@ -1,13 +1,12 @@
 import random
 
 import numpy as np
-import gymnasium as gym
 
-from src.agent import Agent
-from src.control import MonteCarloControl, QLearningControl, SarsaLambdaControl
-from src.dqn import DQNFunction, DQNControl
-from src.environment import EnvironmentNormalizer
-from src.q_functions import QTabular, QLinear, QDeep
+from mo436_final_project.src.src.agent import Agent
+from mo436_final_project.src.src.control import MonteCarloControl
+from mo436_final_project.src.src.dqn import DQNFunction, DQNControl
+from mo436_final_project.src.src.environment import EnvironmentNormalizer
+from mo436_final_project.src.src.q_functions import QDeep
 
 def run_dqn(scale, N_0, gamma=0.9):
     # set deterministic random seed

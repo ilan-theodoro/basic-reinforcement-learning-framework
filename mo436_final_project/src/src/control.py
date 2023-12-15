@@ -1,7 +1,5 @@
 from abc import ABC, abstractmethod
-from collections import deque
 from functools import partial
-from random import sample
 from typing import Callable
 
 import numpy as np
