@@ -7,39 +7,19 @@ from typing import Callable
 import numpy as np
 from tqdm import tqdm
 
+from src.memory import ReplayMemory
 from src.q_functions import QTabular, QLinear
 
-class ReplayMemory(object):
-    def __init__(self, capacity, batch_size=32):
-        self.memory = deque([], maxlen=capacity)
-        self.batch_size = batch_size
-        self.items = 0
-
-    def push(self, *args):
-        """Save a transition"""
-        self.memory.append(args)
-        self.items += 1
-
-    @property
-    def batch_ready(self):
-        return self.items >= self.batch_size
-
-    def sample(self):
-        self.items -= self.batch_size
-        return sample(self.memory, self.batch_size)
-
-    def __len__(self):
-        return len(self.memory)
-
 class AbstractControl(ABC):
-    def __init__(self, env, agent, num_episodes=1000, γ=0.9, batch_size=32):
+    """Abstract class for control algorithms"""
+    def __init__(self, env, agent, replay_capacity=10000, num_episodes=1000, γ=0.9, batch_size=32):
         self.env = env
         self.agent = agent
         self.num_episodes = num_episodes
         self.q_function = agent.q_function
         self.γ = γ
         self.α_t = lambda s, a: 1 / self.q_function.N(s, a) if self.q_function.N(s, a) > 0 else 1
-        self.memory = ReplayMemory(10000, batch_size)
+        self.memory = ReplayMemory(replay_capacity, batch_size)
 
     def fit(self):
         episodes_rewards = []

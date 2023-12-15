@@ -1,5 +1,7 @@
 from numbers import Number
+from typing import Union
 
+import numpy as np
 import torch
 from multipledispatch import dispatch
 from torch import nn
@@ -25,12 +27,23 @@ class DQN(nn.Module):
 
 
 class DQNFunction(QAbstractApproximation):
-    def __init__(self, n_actions, n_feat,  *args, **kwargs):
-        super().__init__(n_actions, n_feat, *args, **kwargs)
+    def __init__(self, batch_size, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.batch_size = batch_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.policy = DQN(n_feat, n_actions).to(self.device)
-        self.target = DQN(n_feat, n_actions).to(self.device)
+        self.policy = DQN(self.n_feat, self.n_actions).to(self.device)
+        self.target = DQN(self.n_feat, self.n_actions).to(self.device)
         self.target.load_state_dict(self.policy.state_dict())
+
+    @dispatch((torch.Tensor, np.ndarray), Number)
+    def __call__(self, state, action):
+        return self(state)[action]
+
+    @dispatch((torch.Tensor, np.ndarray))
+    def __call__(self, state):
+        if isinstance(state, np.ndarray):
+            state = torch.tensor(state, dtype=torch.float32, device=self.device)
+        return self.policy(state)
 
 
 class DQNControl(AbstractControl):
@@ -39,20 +52,12 @@ class DQNControl(AbstractControl):
         self.device = self.q_function.device
         self.policy = self.q_function.policy
         self.target = self.q_function.target
-        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, amsgrad=True, weight_decay=1e-5)
         self.τ = τ
         self.criteria = nn.SmoothL1Loss()
 
     def update_on_episode_end(self, returns):
         pass
-
-    @dispatch(torch.Tensor, Number)
-    def __call__(self, state, action):
-        return self.policy(state)[action]
-
-    @dispatch(torch.Tensor)
-    def __call__(self, state):
-        return self.policy(state)
 
     def update_on_step(self, S, A, R, S_prime, A_prime, done):
         self.memory.push(S, A, S_prime, R)
@@ -85,14 +90,15 @@ class DQNControl(AbstractControl):
                 S_next.append(s_prime)
 
             S = torch.tensor(S, dtype=torch.float32, device=self.device)
-            A = torch.tensor(A, dtype=torch.int64, device=self.device)
+            A = torch.tensor(A, dtype=torch.int64, device=self.device).unsqueeze(0)
             R = torch.tensor(R, dtype=torch.float32, device=self.device)
 
-            state_action_values = self.policy(S).gather(1, A)
+            all_indices = torch.arange(self.memory.batch_size, device=self.device)
+            state_action_values = self.policy(S)[all_indices, A].squeeze(0).unsqueeze(1)
 
             non_final_mask = torch.tensor([False if s is None else True for s in S_next],
                                           device=self.device, dtype=torch.bool)
-            non_final_next_states = torch.cat([s for s in S_next if s is not None])
+            non_final_next_states = torch.tensor([s for s in S_next if s is not None]).to(self.device)
             next_state_values = torch.zeros(self.memory.batch_size, device=self.device)
             with torch.no_grad():
                 next_state_values[non_final_mask] = self.target(non_final_next_states).max(1).values

@@ -13,11 +13,12 @@ def run_dqn(scale, N_0, gamma=0.9):
     # set deterministic random seed
     np.random.seed(0)
     random.seed(0)
+    #env = gym.make("CartPole-v1")
     env = EnvironmentNormalizer.from_gym('CartPole-v1')
     n_states = env.observation_space.shape[0]
-    q_function = DQNFunction(batch_size=256, n_actions=env.action_space.n, n_feat=n_states, discrete_scale=scale)
+    q_function = DQNFunction(batch_size=128, n_actions=env.action_space.n, n_feat=n_states, discrete_scale=scale)
     agent = Agent(q_function, N_0=N_0, n_actions=env.action_space.n)
-    control = DQNControl(env, agent, num_episodes=200_000, γ=gamma, batch_size=256)
+    control = DQNControl(lr=0.0001, τ=0.005, env=env, agent=agent, num_episodes=200_000, γ=gamma, batch_size=128)
     ma_score = control.fit()
     env.close()
     return scale, N_0, ma_score, agent.q_function.states_explored
@@ -29,9 +30,9 @@ def run(scale, N_0, gamma=0.9):
     random.seed(0)
     env = EnvironmentNormalizer.from_gym('CartPole-v1')
     n_states = env.observation_space.shape[0]
-    q_function = QDeep(batch_size=256, n_actions=env.action_space.n, n_feat=n_states, discrete_scale=scale)
+    q_function = QDeep(batch_size=128, n_actions=env.action_space.n, n_feat=n_states, discrete_scale=scale)
     agent = Agent(q_function, N_0=N_0, n_actions=env.action_space.n)
-    control = MonteCarloControl(env, agent, num_episodes=200_000, γ=gamma, batch_size=256)
+    control = MonteCarloControl(env, agent, num_episodes=200_000, γ=gamma, batch_size=128)
     ma_score = control.fit()
     env.close()
     return scale, N_0, ma_score, agent.q_function.states_explored
@@ -50,4 +51,8 @@ def run(scale, N_0, gamma=0.9):
 #     print(results)
 
 # run single experiment
-run_dqn(100, 10, gamma=0.96)
+run_dqn(
+    100,
+    10,
+    gamma=0.99
+)

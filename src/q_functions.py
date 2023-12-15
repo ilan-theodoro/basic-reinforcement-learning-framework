@@ -1,5 +1,6 @@
 import random
 from numbers import Number
+from typing import Union
 
 import numpy as np
 from abc import ABC, abstractmethod
@@ -88,11 +89,11 @@ class QAbstractApproximation(ABC):
         self.n_feat = n_feat
         self.q_tabular = QTabular(n_actions, n_feat, discrete_scale)
 
-    @dispatch(np.ndarray, Number)
+    @dispatch((torch.Tensor, np.ndarray), Number)
     def __call__(self, state, action):
         raise NotImplementedError
 
-    @dispatch(np.ndarray)
+    @dispatch((torch.Tensor, np.ndarray))
     def __call__(self, state):
         raise NotImplementedError
 
@@ -106,7 +107,7 @@ class QAbstractApproximation(ABC):
     def q_max(self, state):
         values = self(state)
         if isinstance(values, torch.Tensor):
-            values = values.detach().numpy().astype(np.int32)
+            values = values.detach().cpu().numpy().astype(np.int32)
         maximal_value = values.max()
         maximal_set = np.argwhere(values == maximal_value).flatten()
         action = random.choice(maximal_set)
@@ -123,12 +124,12 @@ class QLinear(QAbstractApproximation):
         self.base_lr = base_lr
         self.weights = np.zeros((self.n_actions, 4))
 
-    @dispatch(np.ndarray, Number)
+    @dispatch((torch.Tensor, np.ndarray), Number)
     def __call__(self, state, action):
         x = np.asarray(state)
         return self.weights[action].T @ x
 
-    @dispatch(np.ndarray)
+    @dispatch((torch.Tensor, np.ndarray))
     def __call__(self, state):
         x = np.asarray(state)
         return self.weights.T @ x
@@ -169,13 +170,13 @@ class QDeep(QAbstractApproximation):
         from ema_pytorch import EMA
         self.ema = EMA(self.model)
 
-    @dispatch(np.ndarray, Number)
+    @dispatch((torch.Tensor, np.ndarray), Number)
     def __call__(self, state, action):
         x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
         y = self.ema(x)[0, action]
         return y
 
-    @dispatch(np.ndarray)
+    @dispatch((torch.Tensor, np.ndarray))
     def __call__(self, state):
         x = torch.tensor(state, dtype=torch.float).unsqueeze(0)
         y = self.ema(x)[0]
