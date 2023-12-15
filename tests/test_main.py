@@ -2,7 +2,7 @@
 import pytest
 from click.testing import CliRunner
 
-from mo436_final_project import __main__
+from src.mo436_final_project import __main__
 
 
 @pytest.fixture

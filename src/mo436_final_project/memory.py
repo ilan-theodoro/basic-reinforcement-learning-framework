@@ -1,26 +1,27 @@
 from collections import deque
 from random import sample
+from typing import Any
 
 
-class ReplayMemory(object):
-    def __init__(self, capacity, batch_size=32):
-        self.memory = deque([], maxlen=capacity)
+class ReplayMemory:
+    def __init__(self, capacity: int, batch_size: int = 32) -> None:
+        self.memory: deque = deque([], maxlen=capacity)
         self.batch_size = batch_size
         self.items = 0
 
-    def push(self, *args):
+    def push(self, *args: Any) -> None:
         """Save a transition"""
         self.memory.append(args)
         self.items += 1
 
     @property
-    def batch_ready(self):
-        #return self.items >= self.batch_size
+    def batch_ready(self) -> bool:
+        # return self.items >= self.batch_size
         return len(self.memory) >= self.batch_size
 
-    def sample(self):
+    def sample(self) -> list:
         self.items -= self.batch_size
         return sample(self.memory, self.batch_size)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.memory)
