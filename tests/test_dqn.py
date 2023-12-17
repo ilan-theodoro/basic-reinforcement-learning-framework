@@ -1,6 +1,7 @@
 """Test DQN."""
 import random
 
+import gymnasium as gym
 import numpy as np
 import pytest
 
@@ -23,15 +24,15 @@ def test_dqn(available_envs: list) -> None:
     # env = gym.make("CartPole-v1")
     env = EnvironmentNormalizer.from_gym("CartPole-v1")
     assert env.observation_space.shape is not None
-    assert env.action_space.shape is not None
+    assert isinstance(env.action_space, gym.spaces.Discrete)
     n_states = env.observation_space.shape[0]
     q_function = DQNFunction(
         batch_size=128,
-        n_actions=env.action_space.shape[0],
+        n_actions=env.action_space.n,
         n_feat=n_states,
         discrete_scale=scale,
     )
-    agent = Agent(q_function, n0=n0, n_actions=env.action_space.shape[0])
+    agent = Agent(q_function, n0=n0, n_actions=int(env.action_space.n))
     control = DQNControl(
         lr=0.0001,
         tau=0.005,
