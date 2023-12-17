@@ -29,11 +29,6 @@ class QTabular:
          state will be multiplied by this number and then rounded to the nearest
          integer.
         """
-        if discrete_scale % 2 != 0:
-            raise ValueError(
-                "discrete_scale must be even, just to prevent possibles bugs "
-                "that I am too lazy to check whether they really exist"
-            )
         self._q = np.zeros(
             (*[discrete_scale * 2 + 1] * n_feat, n_actions), dtype=np.float32
         )
