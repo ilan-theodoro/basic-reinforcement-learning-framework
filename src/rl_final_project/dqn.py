@@ -73,11 +73,11 @@ class DQNFunction(QAbstractApproximation):
         :return: The Q value for the state-action pair or the Q values for all
          actions if no action is provided
         """
-        state = torch.tensor(state, dtype=torch.float32, device=self.device)
+        state_tsr = torch.tensor(state, dtype=torch.float32, device=self.device)
         if action is not None:
-            return self.policy(state)[action]
+            return self.policy(state_tsr)[action]
         else:
-            return self.policy(state)
+            return self.policy(state_tsr)
 
 
 class DQNControl(AbstractControl):
@@ -157,22 +157,22 @@ class DQNControl(AbstractControl):
         if self.memory.batch_ready:
             batch = self.memory.sample()
 
-            s = []
-            a = []
-            r = []
-            s_next = []
+            s_lst = []
+            a_lst = []
+            r_lst = []
+            s_next_lst = []
             for b in batch:
                 sb, sa, sb_prime, rb = b
-                s.append(sb)
-                a.append(sa)
-                r.append(rb)
-                s_next.append(sb_prime)
+                s_lst.append(sb)
+                a_lst.append(sa)
+                r_lst.append(rb)
+                s_next_lst.append(sb_prime)
 
-            s = torch.tensor(s, dtype=torch.float32, device=self.device)
+            s = torch.tensor(s_lst, dtype=torch.float32, device=self.device)
             a = torch.tensor(
-                a, dtype=torch.int64, device=self.device
+                a_lst, dtype=torch.int64, device=self.device
             ).unsqueeze(0)
-            r = torch.tensor(r, dtype=torch.float32, device=self.device)
+            r = torch.tensor(r_lst, dtype=torch.float32, device=self.device)
 
             all_indices = torch.arange(
                 self.memory.batch_size, device=self.device
@@ -182,12 +182,12 @@ class DQNControl(AbstractControl):
             )
 
             non_final_mask = torch.tensor(
-                [False if s is None else True for s in s_next],
+                [False if s is None else True for s in s_next_lst],
                 device=self.device,
                 dtype=torch.bool,
             )
             non_final_next_states = torch.tensor(
-                [s for s in s_next if s is not None]
+                [s for s in s_next_lst if s is not None]
             ).to(self.device)
             next_state_values = torch.zeros(
                 self.memory.batch_size, device=self.device

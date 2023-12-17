@@ -22,14 +22,16 @@ def test_dqn(available_envs: list) -> None:
     random.seed(0)
     # env = gym.make("CartPole-v1")
     env = EnvironmentNormalizer.from_gym("CartPole-v1")
+    assert env.observation_space.shape is not None
+    assert env.action_space.shape is not None
     n_states = env.observation_space.shape[0]
     q_function = DQNFunction(
         batch_size=128,
-        n_actions=env.action_space.n,
+        n_actions=env.action_space.shape[0],
         n_feat=n_states,
         discrete_scale=scale,
     )
-    agent = Agent(q_function, n0=n0, n_actions=env.action_space.n)
+    agent = Agent(q_function, n0=n0, n_actions=env.action_space.shape[0])
     control = DQNControl(
         lr=0.0001,
         tau=0.005,

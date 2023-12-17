@@ -196,7 +196,7 @@ class QAbstractApproximation(ABC):
         maximal_set = np.argwhere(values == maximal_value).flatten()
         action = np.random.choice(maximal_set)
 
-        return action, maximal_value
+        return action, maximal_value.item()
 
     def __getattr__(self, name: str) -> Any:
         """Get missing attributes from the tabular Q function."""
@@ -254,7 +254,7 @@ class QLinear(QAbstractApproximation):
         :param _: ignored
         :param α: learning rate.
         """
-        predicted = self(state, action)
+        predicted = self(state, action).item()
         self.q_tabular.update(state, action, expected, predicted, α)
         α *= self.base_lr
 

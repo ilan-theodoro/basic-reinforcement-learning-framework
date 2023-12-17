@@ -70,12 +70,13 @@ class AbstractControl(ABC):
             state, _ = self.env.reset(seed=i_episode)
             action = self.agent.act(state, current_episode=i_episode)
             returns = []
-            total_reward = 0
+            total_reward = 0.0
             self.reset()
             while True:
                 state_prime, reward, done, truncated, info = self.env.step(
                     action
                 )
+                reward = float(reward)
                 returns.append((state, action, reward))
                 total_reward += reward
 
@@ -112,7 +113,7 @@ class AbstractControl(ABC):
                 state = state_prime
                 action = action_prime
 
-        return np.mean(episodes_rewards[-(self.num_episodes // 10) :])
+        return float(np.mean(episodes_rewards[-(self.num_episodes // 10) :]))
 
     @abstractmethod
     def update_on_step(
@@ -276,7 +277,7 @@ class SarsaLambdaControl(AbstractControl):
 
         def q_instantiation(
             s: np.ndarray, a: int
-        ) -> Callable[[], np.ndarray | Tensor]:
+        ) -> Callable[[], float | np.ndarray | Tensor]:
             return lambda: self.q_function(s, a)
 
         q = q_instantiation(state, action)
