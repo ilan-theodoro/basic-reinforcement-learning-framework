@@ -5,12 +5,13 @@ import numpy as np
 import pytest
 
 from rl_final_project.agent import Agent
-from rl_final_project.dqn import DQNFunction, DQNControl
+from rl_final_project.dqn import DQNControl
+from rl_final_project.dqn import DQNFunction
 from rl_final_project.environment import EnvironmentNormalizer
 
 
 @pytest.mark.usefixtures("available_envs")
-def test_dqn(available_envs: list):
+def test_dqn(available_envs: list) -> None:
     """Test DQN."""
     scale = 1
     n0 = 1

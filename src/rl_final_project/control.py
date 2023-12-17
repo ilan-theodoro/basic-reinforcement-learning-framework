@@ -132,7 +132,7 @@ class AbstractControl(ABC):
         """Abstract method to update the agent on an episode end."""
         pass
 
-    def reset(self) -> None:
+    def reset(self) -> None:  # noqa: B027
         """Reset the control algorithm."""
         pass
 
