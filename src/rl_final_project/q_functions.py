@@ -35,10 +35,10 @@ class QTabular:
                 "that I am too lazy to check whether they really exist"
             )
         self._q = np.zeros(
-            (*[discrete_scale] * n_feat, n_actions), dtype=np.float32
+            (*[discrete_scale * 2 + 1] * n_feat, n_actions), dtype=np.float32
         )
         self._n = np.zeros(
-            (*[discrete_scale] * n_feat, n_actions), dtype=np.float32
+            (*[discrete_scale * 2 + 1] * n_feat, n_actions), dtype=np.float32
         )
 
         self.n_actions = n_actions
@@ -46,11 +46,11 @@ class QTabular:
         self.count_non_zero = 0
         self.discrete_scale = discrete_scale
 
-    def __call__(self, state: np.ndarray, action: int) -> None:
+    def __call__(self, state: np.ndarray, action: int) -> float:
         """Call function to get the Q value of a state-action pair."""
         state = self._preprocess_state(state)
         idx = self._index(state, action)
-        return self._q[idx]
+        return self._q[idx].item()
 
     @property
     def states_explored(self) -> int:
@@ -87,7 +87,7 @@ class QTabular:
         state: np.ndarray,
         action: int,
         expected: float,
-        predicted: float,
+        _: float,
         α: float,
     ) -> None:
         """Update the Q value for a given state-action pair.
@@ -99,9 +99,10 @@ class QTabular:
         :param state: state associated.
         :param action: action associated.
         :param expected: expected value for the evaluated policy.
-        :param predicted: predicted value by the policy.
+        :param _: ignored.
         :param α: learning rate.
         """
+        predicted = self(state, action)
         state = self._preprocess_state(state)
         idx = self._index(state, action)
         if self._n[idx] == 0:
@@ -139,7 +140,9 @@ class QTabular:
          state.
         :return: index of a state or a state-action pair.
         """
-        state_idx = state + self.discrete_scale // 2
+        state_idx = state + self.discrete_scale
+        if any(state_idx < 0):
+            raise ValueError("Index is negative")
         if action is None:
             idx = tuple(state_idx)
         else:
@@ -226,7 +229,7 @@ class QLinear(QAbstractApproximation):
         """
         super().__init__(*args, **kwargs)
         self.base_lr = base_lr
-        self.weights = np.zeros((self.n_actions, 4))
+        self.weights = np.zeros((self.n_feat, self.n_actions))
 
     def __call__(
         self, state: np.ndarray, action: Optional[int] = None
@@ -241,7 +244,7 @@ class QLinear(QAbstractApproximation):
         state: np.ndarray,
         action: int,
         expected: float,
-        predicted: float,
+        _: float,
         α: float,
     ) -> None:
         """Update the Q linear approximation for a given state-action pair.
@@ -253,19 +256,16 @@ class QLinear(QAbstractApproximation):
         :param state: state associated.
         :param action: action associated.
         :param expected: expected value for the evaluated policy.
-        :param predicted: predicted value by the policy.
+        :param _: ignored
         :param α: learning rate.
         """
+        predicted = self(state, action)
         self.q_tabular.update(state, action, expected, predicted, α)
         α *= self.base_lr
 
-        if predicted != self(state, action):
-            raise ValueError(
-                "Previous predicted value is not equal to the "
-                "current predicted value"
-            )
-
-        self.weights[action] += α * (expected - predicted) * np.asarray(state)
+        self.weights[:, action] += (
+            α * (expected - predicted) * np.asarray(state)
+        )
 
 
 class MLP(torch.nn.Module):

@@ -7,7 +7,6 @@ from typing import Callable
 from typing import Dict
 from typing import Optional
 from typing import Tuple
-from typing import get_args
 
 import gymnasium as gym
 import numpy as np
@@ -153,7 +152,7 @@ class AbstractControl(ABC):
             updated_batch = []
             for b in batch:
                 s, a, y_callable, _, α = b
-                if isinstance(y_callable, get_args(Callable)):
+                if isinstance(y_callable, Callable):  # type: ignore
                     y = y_callable()
                 else:
                     y = y_callable
@@ -181,11 +180,8 @@ class MonteCarloControl(AbstractControl):
         for state, action, reward in reversed(returns):
             gt = self.γ * gt + reward
 
-            predicted = self.q_function(state, action)
             # Update the mean for the action-value function Q(s,a)
-            self.memory.push(
-                state, action, gt, predicted, self.α_t(state, action)
-            )
+            self.memory.push(state, action, gt, None, self.α_t(state, action))
 
         return self.optimize()
 
@@ -304,11 +300,12 @@ class SarsaLambdaControl(AbstractControl):
                 self.γ * self.λ * self.z
                 + (1 - α * self.γ * self.λ * self.z.T @ x) * x
             )
-            self.q_function.weights[action] += (
+            self.q_function.weights[:, action] += (
                 α * 0.1 * (δ() + q() - self.q_old) * self.z
                 - α * (q() - self.q_old) * x
             )
             self.q_function.q_tabular._n[idx] += 1
+            self.q_function.q_tabular.count_non_zero += 1
             self.q_old = q_prime()
         elif isinstance(self.q_function, QTabular):
             self.memory.push(

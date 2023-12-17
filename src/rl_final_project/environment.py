@@ -7,12 +7,6 @@ import numpy as np
 from numpy import ndarray
 
 
-def _normalize(obs: np.ndarray) -> np.ndarray:
-    """Normalize the state according to a sigmoid function."""
-    obs = 1 / (1 + np.exp(-obs)) - 0.5
-    return obs
-
-
 class EnvironmentNormalizer(gym.Env):
     """Normalized environment.
 
@@ -37,7 +31,13 @@ class EnvironmentNormalizer(gym.Env):
             shape=self.env.observation_space.shape,
             dtype=np.int32,
         )
-        self.scale = 1 / (1 + np.exp(-self.env.observation_space.high)) - 0.5
+        self.scale_right = (
+            1 / (1 + np.exp(-self.env.observation_space.high)) - 0.5
+        )
+        self.scale_left = (
+            1 / (1 + np.exp(-self.env.observation_space.low)) - 0.5
+        )
+        self.mean = (self.scale_right + self.scale_left) / 2
 
     def step(
         self, action: int
@@ -52,7 +52,14 @@ class EnvironmentNormalizer(gym.Env):
             extra information.
         """
         obs, reward, terminated, truncated, info = self.env.step(action)
-        return _normalize(obs), reward, terminated, truncated, info
+        normalized_obs = self._normalize(obs)
+        return normalized_obs, reward, terminated, truncated, info
+
+    def _normalize(self, obs: np.ndarray) -> np.ndarray:
+        """Normalize the state according to a sigmoid function."""
+        obs = 1 / (1 + np.exp(-obs)) - 0.5
+        obs = (obs - self.mean) / (self.scale_right - self.mean)
+        return obs
 
     @staticmethod
     def from_gym(name_id: str) -> gym.Env:
