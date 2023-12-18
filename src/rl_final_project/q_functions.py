@@ -19,7 +19,7 @@ class QTabular:
     """Discretized tabular Q state-action-value function."""
 
     def __init__(
-        self, n_actions: int, n_feat: int, discrete_scale: float = 40
+        self, n_actions: int, n_feat: int, discrete_scale: float = 40.0
     ) -> None:
         """Define a tabular Q function.
 

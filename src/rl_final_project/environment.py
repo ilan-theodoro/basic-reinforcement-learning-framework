@@ -1,6 +1,7 @@
 """This module contains the environment tools used in the project."""
 import gymnasium as gym
 import numpy as np
+from scipy.special import expit as sigmoid
 
 
 class EnvironmentNormalizer(gym.ObservationWrapper):
@@ -24,12 +25,8 @@ class EnvironmentNormalizer(gym.ObservationWrapper):
             dtype=np.float32,
         )
         if isinstance(self.env.observation_space, gym.spaces.Box):
-            self.scale_right = (
-                1 / (1 + np.exp(-self.env.observation_space.high)) - 0.5
-            )
-            self.scale_left = (
-                1 / (1 + np.exp(-self.env.observation_space.low)) - 0.5
-            )
+            self.scale_right = sigmoid(self.env.observation_space.high) - 0.5
+            self.scale_left = sigmoid(self.env.observation_space.low) - 0.5
             self.mean = (self.scale_right + self.scale_left) / 2
 
     def observation(self, observation: np.ndarray) -> np.ndarray:
@@ -42,7 +39,7 @@ class EnvironmentNormalizer(gym.ObservationWrapper):
 
     def _normalize(self, obs: np.ndarray) -> np.ndarray:
         """Normalize the state according to a sigmoid function."""
-        obs = 1 / (1 + np.exp(-obs)) - 0.5
+        obs = sigmoid(obs) - 0.5
         obs = (obs - self.mean) / (self.scale_right - self.mean)
         return obs
 
