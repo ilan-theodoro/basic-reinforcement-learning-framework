@@ -4,9 +4,7 @@ from abc import abstractmethod
 from functools import partial
 from typing import Any
 from typing import Callable
-from typing import Dict
 from typing import Optional
-from typing import Tuple
 from typing import Union
 
 import gymnasium as gym
@@ -43,6 +41,7 @@ class AbstractControl(ABC):
         num_episodes: int = 1000,
         gamma: float = 0.9,
         batch_size: int = 32,
+        reward_mode: str = "default",
     ) -> None:
         """Default constructor for the AbstractControl class.
 
@@ -53,6 +52,10 @@ class AbstractControl(ABC):
          learn.
         :param gamma: The discount factor.
         :param batch_size: The batch size for the replay memory.
+        :param reward_mode: The reward mode. It can be 'default' or 'sparse'. In
+         the 'default' mode, the reward is the reward received from the
+         environment. In the 'sparse' mode, the reward is the total reward
+         received in the episode.
         """
         self.env = env
         self.agent = agent
@@ -66,7 +69,20 @@ class AbstractControl(ABC):
         )
         self.memory = ReplayMemory(replay_capacity, batch_size)
 
-    def fit(self) -> float:
+        self.reward_processor: Callable[[float, bool, float], float]
+        if reward_mode == "default":
+            self.reward_processor = lambda r, *_: r
+        elif reward_mode == "sparse":
+            self.reward_processor = (
+                lambda _, done, total_reward: total_reward if done else 0
+            )
+        else:
+            raise ValueError(
+                f"Invalid reward mode. Expected 'default' or 'sparse', got "
+                f"{reward_mode}"
+            )
+
+    def fit(self) -> list[float]:
         """Fitting loop for the control algorithm.
 
         It is built according to a generic reinforcement learning loop that
@@ -90,8 +106,11 @@ class AbstractControl(ABC):
                     action
                 )
                 reward = float(reward)
-                returns.append((state, action, reward))
                 total_reward += reward
+                reward_processed = self.reward_processor(
+                    reward, done, total_reward
+                )
+                returns.append((state, action, reward_processed))
 
                 action_prime = self.agent.act(
                     state_prime, current_episode=i_episode
@@ -99,7 +118,7 @@ class AbstractControl(ABC):
                 loss_updated = self.update_on_step(
                     state,
                     action,
-                    reward,
+                    reward_processed,
                     state_prime if not done else None,
                     action_prime,
                     done,
@@ -126,7 +145,7 @@ class AbstractControl(ABC):
                 state = state_prime
                 action = action_prime
 
-        return float(np.mean(episodes_rewards[-(self.num_episodes // 10) :]))
+        return episodes_rewards
 
     @abstractmethod
     def update_on_step(
@@ -262,7 +281,7 @@ class SarsaLambdaControl(AbstractControl):
         """
         super().__init__(*args, **kwargs)
         self.λ = lambda_factor
-        self.e: Dict[Tuple, float] = {}
+        self.e = np.zeros_like(self.q_function._n)
         self.q_old = 0
         self.z = np.zeros(self.q_function.n_feat)
 
@@ -347,13 +366,10 @@ class SarsaLambdaControl(AbstractControl):
                     s = self.q_function._preprocess_state(s)
                     idx = self.q_function._index(s, a)
 
-                    if idx not in self.e:
-                        self.e[idx] = 0
                     self.e[idx] += 1
-                    for idx, e in self.e.items():
-                        self.q_function._n[idx] += α * e
-                        self.q_function._q[idx] += α * δ * e
-                        self.e[idx] *= self.γ * self.λ
+                    self.q_function._n += α * self.e
+                    self.q_function._q += α * δ * self.e
+                    self.e *= self.γ * self.λ
 
         return None
 
