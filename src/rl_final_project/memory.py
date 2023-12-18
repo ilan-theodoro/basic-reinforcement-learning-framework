@@ -48,7 +48,3 @@ class ReplayMemory:
             )
         self.items -= self.batch_size
         return sample(self.memory, self.batch_size)
-
-    def __len__(self) -> int:
-        """The number of transitions saved."""
-        return len(self.memory)

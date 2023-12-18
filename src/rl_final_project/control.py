@@ -7,16 +7,29 @@ from typing import Callable
 from typing import Dict
 from typing import Optional
 from typing import Tuple
+from typing import Union
 
 import gymnasium as gym
 import numpy as np
 from torch import Tensor
-from tqdm import tqdm
 
 from rl_final_project.agent import Agent
 from rl_final_project.memory import ReplayMemory
 from rl_final_project.q_functions import QLinear
 from rl_final_project.q_functions import QTabular
+
+
+try:
+    # Attempt to import the IPython module
+    from IPython import get_ipython
+
+    # Check if the code is running in a Jupyter notebook
+    if "IPKernelApp" in get_ipython().config:
+        # Import the tqdm notebook module
+        from tqdm.notebook import tqdm
+except Exception:
+    # If it fails, import the terminal version of tqdm
+    from tqdm import tqdm
 
 
 class AbstractControl(ABC):
@@ -277,7 +290,7 @@ class SarsaLambdaControl(AbstractControl):
 
         def q_instantiation(
             s: np.ndarray, a: int
-        ) -> Callable[[], float | np.ndarray | Tensor]:
+        ) -> Callable[[], Union[float, np.ndarray, Tensor]]:
             return lambda: self.q_function(s, a)
 
         q = q_instantiation(state, action)

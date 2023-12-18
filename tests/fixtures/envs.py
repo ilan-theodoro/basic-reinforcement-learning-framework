@@ -14,9 +14,3 @@ def available_envs() -> List[Env]:
         gym.make("MountainCar-v0"),
         gym.make("Acrobot-v1"),
     ]
-
-
-@pytest.fixture()
-def cart_pole_env() -> List[Env]:
-    """Return a gym environment."""
-    return [gym.make("CartPole-v1")]

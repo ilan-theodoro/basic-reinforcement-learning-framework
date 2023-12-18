@@ -18,6 +18,7 @@ class Agent:
         n0: float = 12.0,
         n_actions: int = 2,
         eps_greedy_function: str = "dqn",
+        stochasticity_factor: float = 0.0,
     ) -> None:
         """Agent class.
 
@@ -36,8 +37,12 @@ class Agent:
          N_0 / (N_0 + t), where t is the current episode.
          - "dqn": epsilon is a function of the  number of steps as used in
          the DQN paper. Defined as 0.05 + 0.85 * exp(-steps_done / 1000).
+        :param stochasticity_factor: factor that defines the stochasticity of
+         the agent. The action is chosen randomly with probability equal to
+         stochasticity_factor.
         """
         self.q_function = q_function
+        self.stochasticity_factor = stochasticity_factor
 
         self.ϵ: Callable[[np.ndarray, int], float]
 
@@ -74,7 +79,8 @@ class Agent:
         self.steps_done += 1
         # ϵ-greedy strategy to choose the action
         t = np.random.uniform()
-        if t > self.ϵ(state, current_episode):
+        s = np.random.uniform()
+        if t > self.ϵ(state, current_episode) and s > self.stochasticity_factor:
             return action
         else:
             return np.random.randint(self.n_actions)
