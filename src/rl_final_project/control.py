@@ -8,6 +8,7 @@ from typing import Optional
 from typing import Union
 
 import gymnasium as gym
+import numba
 import numpy as np
 from torch import Tensor
 
@@ -15,6 +16,7 @@ from rl_final_project.agent import Agent
 from rl_final_project.memory import ReplayMemory
 from rl_final_project.q_functions import QLinear
 from rl_final_project.q_functions import QTabular
+from numba import jit
 
 
 try:
@@ -271,6 +273,15 @@ class QLearningControl(AbstractControl):
         pass
 
 
+@jit(nopython=True)
+def _sarsa_update_q_function(n: np.ndarray, q: np.ndarray, etrace: dict, α: float, δ: float, γ: float, λ: float) -> None:
+    """Update the Q function for the Sarsa algorithm."""
+    for i, e in etrace.items():
+        n[i] += α * e
+        q[i] += α * δ * e
+        etrace[i] *= γ * λ
+
+
 class SarsaLambdaControl(AbstractControl):
     """Sarsa control algorithm implementation."""
 
@@ -284,7 +295,7 @@ class SarsaLambdaControl(AbstractControl):
         """
         super().__init__(*args, **kwargs)
         self.λ = lambda_factor
-        self.e = np.zeros_like(self.q_function._n)
+        self.e = numba.typed.Dict()
         self.q_old = 0
         self.z = np.zeros(self.q_function.n_feat)
 
@@ -369,10 +380,12 @@ class SarsaLambdaControl(AbstractControl):
                     s = self.q_function._preprocess_state(s)
                     idx = self.q_function._index(s, a)
 
-                    self.e[idx] += 1
-                    self.q_function._n += α * self.e
-                    self.q_function._q += α * δ * self.e
-                    self.e *= self.γ * self.λ
+                    if idx not in self.e:
+                        self.e[idx] = 0.0
+                        self.q_function.count_non_zero += 1
+
+                    # compiled code for fast update
+                    _sarsa_update_q_function(self.q_function._n, self.q_function._q, self.e, α, δ, self.γ, self.λ)
 
         return None
 
