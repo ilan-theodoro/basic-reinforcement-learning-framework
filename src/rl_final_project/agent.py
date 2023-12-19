@@ -1,5 +1,6 @@
 """Agent class definition."""
 from typing import Callable
+from typing import Optional
 from typing import Union
 
 import numpy as np
@@ -15,9 +16,9 @@ class Agent:
     def __init__(
         self,
         q_function: Union[QTabular, QAbstractApproximation],
-        n0: float = 12.0,
-        n_actions: int = 2,
+        n_actions: int,
         eps_greedy_function: str = "dqn",
+        n0: Optional[float] = None,
         stochasticity_factor: float = 0.0,
     ) -> None:
         """Agent class.
@@ -45,6 +46,15 @@ class Agent:
         self.stochasticity_factor = stochasticity_factor
 
         self.ϵ: Callable[[np.ndarray, int], float]
+
+        if eps_greedy_function == "dqn" and n0 is not None:
+            raise ValueError(
+                "N0 is not defined when using the DQN epsilon function"
+            )
+        elif eps_greedy_function != "dqn" and n0 is None:
+            raise ValueError(
+                "N0 must be defined when using a custom epsilon function"
+            )
 
         if eps_greedy_function == "s":
             self.ϵ = lambda s, t: n0 / (n0 + self.q_function.n(s))  # type: ignore

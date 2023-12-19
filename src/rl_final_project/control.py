@@ -37,9 +37,9 @@ class AbstractControl(ABC):
         self,
         env: gym.Env,
         agent: Agent,
+        gamma: float,
         replay_capacity: int = 10000,
         num_episodes: int = 1000,
-        gamma: float = 0.9,
         batch_size: int = 32,
         reward_mode: str = "default",
     ) -> None:
