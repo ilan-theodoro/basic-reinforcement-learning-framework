@@ -42,7 +42,7 @@ class AbstractControl(ABC):
         gamma: float,
         replay_capacity: int = 10000,
         num_episodes: int = 1000,
-        batch_size: int = 32,
+        batch_size: Optional[int] = 32,
         reward_mode: str = "default",
         verbose: bool = True,
     ) -> None:
@@ -215,13 +215,23 @@ class MonteCarloControl(AbstractControl):
     def update_on_episode_end(self, returns: list) -> Optional[float]:
         """Feedback the agent with the returns."""
         gt = 0
+        count = 0
         for state, action, reward in reversed(returns):
             gt = self.γ * gt + reward
 
             # Update the mean for the action-value function Q(s,a)
             self.memory.push(state, action, gt, None, self.α_t(state, action))
+            count += 1
 
-        return self.optimize()
+        if self.memory.consume_and_release:
+            # workaround a.k.a gambiarra
+            old_batch_size = self.memory.batch_size
+            self.memory.batch_size = count
+            ret = self.optimize()
+            self.memory.batch_size = old_batch_size
+            return ret
+        else:
+            return self.optimize()
 
 
 class QLearningControl(AbstractControl):
