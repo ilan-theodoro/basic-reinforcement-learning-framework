@@ -42,6 +42,7 @@ class AbstractControl(ABC):
         num_episodes: int = 1000,
         batch_size: int = 32,
         reward_mode: str = "default",
+        verbose: bool = True,
     ) -> None:
         """Default constructor for the AbstractControl class.
 
@@ -56,8 +57,10 @@ class AbstractControl(ABC):
          the 'default' mode, the reward is the reward received from the
          environment. In the 'sparse' mode, the reward is the total reward
          received in the episode.
+        :param verbose: Whether to print the progress bar.
         """
         self.env = env
+        self.verbose = verbose
         self.agent = agent
         self.num_episodes = num_episodes
         self.q_function = agent.q_function
@@ -94,7 +97,7 @@ class AbstractControl(ABC):
         """
         episodes_rewards = []
 
-        pbar = tqdm(range(self.num_episodes))
+        pbar = tqdm(range(self.num_episodes), disable=not self.verbose)
         for i_episode in pbar:
             state, _ = self.env.reset(seed=i_episode)
             action = self.agent.act(state, current_episode=i_episode)
