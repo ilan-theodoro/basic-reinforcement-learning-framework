@@ -83,14 +83,13 @@ class Agent:
         :return:
             action chosen.
         """
-        with torch.no_grad():
-            action, best_reward = self.q_function.q_max(state)
-
         self.steps_done += 1
         # ϵ-greedy strategy to choose the action
         t = np.random.uniform()
         s = np.random.uniform()
         if t > self.ϵ(state, current_episode) and s > self.stochasticity_factor:
+            with torch.no_grad():
+                action, best_reward = self.q_function.q_max(state)
             return action
         else:
             return np.random.randint(self.n_actions)

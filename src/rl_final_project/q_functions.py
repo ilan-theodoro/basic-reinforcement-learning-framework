@@ -191,7 +191,7 @@ class QAbstractApproximation(ABC):
         """
         values = self(state)
         if isinstance(values, torch.Tensor):
-            values = values.detach().cpu().numpy().astype(np.int32)
+            values = values.detach().cpu().numpy().astype(np.float32)
         maximal_value = values.max()
         maximal_set = np.argwhere(values == maximal_value).flatten()
         action = np.random.choice(maximal_set)
