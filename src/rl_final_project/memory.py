@@ -5,7 +5,8 @@ date: December/2023.
 """
 from collections import deque
 from random import sample
-from typing import Any, Optional
+from typing import Any
+from typing import Optional
 
 
 class ReplayMemory:
@@ -23,6 +24,7 @@ class ReplayMemory:
             self.consume_and_release = True
             self.batch_size = 1
         else:
+            self.consume_and_release = False
             self.batch_size = batch_size
 
     def push(self, *args: Any) -> None:
