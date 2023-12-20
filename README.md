@@ -35,7 +35,7 @@ This was tested with the following packages:
 You can install it by the following command (I did not have time to test it):
 
 ```console
-$ pip3 install https://github.com/ilan-francisco/basic-reinforcement-learning-framework.git
+$ pip3 install git+https://github.com/ilan-francisco/basic-reinforcement-learning-framework.git
 ```
 
 ## Usage
