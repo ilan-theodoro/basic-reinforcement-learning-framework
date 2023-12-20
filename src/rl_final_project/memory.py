@@ -6,20 +6,26 @@ date: December/2023.
 from collections import deque
 from random import sample
 from typing import Any
+from typing import Optional
 
 
 class ReplayMemory:
     """Replay memory as described in the DQN paper."""
 
-    def __init__(self, capacity: int, batch_size: int = 32) -> None:
+    def __init__(self, capacity: int, batch_size: Optional[int]) -> None:
         """Initialize the replay memory.
 
         :param capacity: The maximum number of transitions to be saved.
         :param batch_size: The batch size to be sampled.
+        :param consume_and_release: Whether to consume and release the memory.
         """
         self.memory: deque = deque([], maxlen=capacity)
-        self.batch_size = batch_size
-        self.items = 0
+        if batch_size is None:
+            self.consume_and_release = True
+            self.batch_size = 1
+        else:
+            self.consume_and_release = False
+            self.batch_size = batch_size
 
     def push(self, *args: Any) -> None:
         """Save a transition.
@@ -27,7 +33,6 @@ class ReplayMemory:
         :param args: The transition to be saved.
         """
         self.memory.append(args)
-        self.items += 1
 
     @property
     def batch_ready(self) -> bool:
@@ -46,5 +51,8 @@ class ReplayMemory:
             raise RuntimeError(
                 "The batch is not ready. There are not enough " "transitions."
             )
-        self.items -= self.batch_size
-        return sample(self.memory, self.batch_size)
+        if self.consume_and_release:
+            ret = [self.memory.popleft() for _ in range(self.batch_size)]
+            return ret
+        else:
+            return sample(self.memory, self.batch_size)

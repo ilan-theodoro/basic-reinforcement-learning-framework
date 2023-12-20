@@ -103,8 +103,8 @@ class DQNControl(AbstractControl):
         self.device = self.q_function.device
         self.policy = self.q_function.policy
         self.target = self.q_function.target
-        self.optimizer = torch.optim.Adam(
-            self.policy.parameters(), lr=lr, amsgrad=True, weight_decay=1e-5
+        self.optimizer = torch.optim.AdamW(
+            self.policy.parameters(), lr=lr, amsgrad=True
         )
         self.τ = tau
         self.criteria = nn.SmoothL1Loss()

@@ -8,6 +8,7 @@ from typing import Optional
 from typing import Union
 
 import gymnasium as gym
+import numba
 import numpy as np
 from torch import Tensor
 
@@ -15,6 +16,7 @@ from rl_final_project.agent import Agent
 from rl_final_project.memory import ReplayMemory
 from rl_final_project.q_functions import QLinear
 from rl_final_project.q_functions import QTabular
+from numba import jit
 
 
 try:
@@ -37,11 +39,12 @@ class AbstractControl(ABC):
         self,
         env: gym.Env,
         agent: Agent,
+        gamma: float,
         replay_capacity: int = 10000,
         num_episodes: int = 1000,
-        gamma: float = 0.9,
-        batch_size: int = 32,
+        batch_size: Optional[int] = 32,
         reward_mode: str = "default",
+        verbose: bool = True,
     ) -> None:
         """Default constructor for the AbstractControl class.
 
@@ -56,8 +59,10 @@ class AbstractControl(ABC):
          the 'default' mode, the reward is the reward received from the
          environment. In the 'sparse' mode, the reward is the total reward
          received in the episode.
+        :param verbose: Whether to print the progress bar.
         """
         self.env = env
+        self.verbose = verbose
         self.agent = agent
         self.num_episodes = num_episodes
         self.q_function = agent.q_function
@@ -94,7 +99,7 @@ class AbstractControl(ABC):
         """
         episodes_rewards = []
 
-        pbar = tqdm(range(self.num_episodes))
+        pbar = tqdm(range(self.num_episodes), disable=not self.verbose)
         for i_episode in pbar:
             state, _ = self.env.reset(seed=i_episode)
             action = self.agent.act(state, current_episode=i_episode)
@@ -210,13 +215,23 @@ class MonteCarloControl(AbstractControl):
     def update_on_episode_end(self, returns: list) -> Optional[float]:
         """Feedback the agent with the returns."""
         gt = 0
+        count = 0
         for state, action, reward in reversed(returns):
             gt = self.γ * gt + reward
 
             # Update the mean for the action-value function Q(s,a)
             self.memory.push(state, action, gt, None, self.α_t(state, action))
+            count += 1
 
-        return self.optimize()
+        if self.memory.consume_and_release:
+            # workaround a.k.a gambiarra
+            old_batch_size = self.memory.batch_size
+            self.memory.batch_size = count
+            ret = self.optimize()
+            self.memory.batch_size = old_batch_size
+            return ret
+        else:
+            return self.optimize()
 
 
 class QLearningControl(AbstractControl):
@@ -268,6 +283,15 @@ class QLearningControl(AbstractControl):
         pass
 
 
+@jit(nopython=True)
+def _sarsa_update_q_function(n: np.ndarray, q: np.ndarray, etrace: dict, α: float, δ: float, γ: float, λ: float) -> None:
+    """Update the Q function for the Sarsa algorithm."""
+    for i, e in etrace.items():
+        n[i] += α * e
+        q[i] += α * δ * e
+        etrace[i] *= γ * λ
+
+
 class SarsaLambdaControl(AbstractControl):
     """Sarsa control algorithm implementation."""
 
@@ -281,7 +305,7 @@ class SarsaLambdaControl(AbstractControl):
         """
         super().__init__(*args, **kwargs)
         self.λ = lambda_factor
-        self.e = np.zeros_like(self.q_function._n)
+        self.e = numba.typed.Dict()
         self.q_old = 0
         self.z = np.zeros(self.q_function.n_feat)
 
@@ -366,10 +390,12 @@ class SarsaLambdaControl(AbstractControl):
                     s = self.q_function._preprocess_state(s)
                     idx = self.q_function._index(s, a)
 
-                    self.e[idx] += 1
-                    self.q_function._n += α * self.e
-                    self.q_function._q += α * δ * self.e
-                    self.e *= self.γ * self.λ
+                    if idx not in self.e:
+                        self.e[idx] = 0.0
+                        self.q_function.count_non_zero += 1
+
+                    # compiled code for fast update
+                    _sarsa_update_q_function(self.q_function._n, self.q_function._q, self.e, α, δ, self.γ, self.λ)
 
         return None
 

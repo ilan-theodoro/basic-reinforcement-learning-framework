@@ -32,7 +32,7 @@ def test_dqn(available_envs: list) -> None:
         n_feat=n_states,
         discrete_scale=scale,
     )
-    agent = Agent(q_function, n0=n0, n_actions=int(env.action_space.n))
+    agent = Agent(q_function, n0=n0, n_actions=env.action_space.n)
     control = DQNControl(
         lr=0.0001,
         tau=0.005,
