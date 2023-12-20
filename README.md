@@ -1,45 +1,92 @@
-# Reinforcement Learning course's final project.
+# Basic Reinforcement Learning Framework.
 
-[![PyPI](https://img.shields.io/pypi/v/mo436_final_project.svg)][pypi_]
-[![Status](https://img.shields.io/pypi/status/mo436_final_project.svg)][status]
-[![Python Version](https://img.shields.io/pypi/pyversions/mo436_final_project)][python version]
-[![License](https://img.shields.io/pypi/l/mo436_final_project)][license]
+This is a project developed and evaluated in the course of Reinforcement Learning at the State University of Campinas.
 
-[![Read the documentation at https://mo436_final_project.readthedocs.io/](https://img.shields.io/readthedocs/mo436_final_project/latest.svg?label=Read%20the%20Docs)][read the docs]
-[![Tests](https://github.com/ilan-francisco/mo436_final_project/workflows/Tests/badge.svg)][tests]
-[![Codecov](https://codecov.io/gh/ilan-francisco/mo436_final_project/branch/main/graph/badge.svg)][codecov]
+[![Tests](https://github.com/ilan-francisco/basic-reinforcement-learning-framework/workflows/Tests/badge.svg)][tests]
 
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)][pre-commit]
 [![Black](https://img.shields.io/badge/code%20style-black-000000.svg)][black]
 
-[pypi_]: https://pypi.org/project/mo436_final_project/
-[status]: https://pypi.org/project/mo436_final_project/
-[python version]: https://pypi.org/project/mo436_final_project
-[read the docs]: https://mo436_final_project.readthedocs.io/
-[tests]: https://github.com/ilan-francisco/mo436_final_project/actions?workflow=Tests
-[codecov]: https://app.codecov.io/gh/ilan-francisco/mo436_final_project
+[tests]: https://github.com/ilan-francisco/basic-reinforcement-learning-framework/actions?workflow=Tests
 [pre-commit]: https://github.com/pre-commit/pre-commit
 [black]: https://github.com/psf/black
 
 ## Features
 
-- TODO
+- Furama's Gymnasium integration
+- Monte-carlo Classic Control
+- Q-Learning Classic Control
+- Sarsa-lambda Classic Control
+- DQN
 
 ## Requirements
 
-- TODO
+This was tested with the following packages:
+
+- torch==2.0.1
+- gymnasium==0.29.1
+- scikit-learn==1.3.2
+- tqdm==4.66.1
+- numba==0.58.1
+- matplotlib==3.8.2
 
 ## Installation
 
-You can install _Reinforcement Learning course's final project._ via [pip] from [PyPI]:
+You can install it by the following command (I did not have time to test it):
 
 ```console
-$ pip install mo436_final_project
+$ pip3 install https://github.com/ilan-francisco/basic-reinforcement-learning-framework.git
 ```
 
 ## Usage
 
-Please see the [Command-line Reference] for details.
+Here is an example of basic usage:
+
+```python
+import matplotlib.pyplot as plt
+
+from rl_final_project.agent import Agent
+from rl_final_project.dqn import DQNControl
+from rl_final_project.dqn import DQNFunction
+from rl_final_project.environment import EnvironmentNormalizer
+
+env = EnvironmentNormalizer.from_gym("CartPole-v1")
+n_states = env.observation_space.shape[0]
+
+q_function = DQNFunction(
+    n_actions=env.action_space.n, 
+    n_feat=n_states,
+    batch_size=128
+)
+
+agent = Agent(
+    q_function,
+    n_actions=env.action_space.n,
+    eps_greedy_function="dqn",
+    stochasticity_factor=0.0,
+)
+
+control = DQNControl(
+    lr=0.001, 
+    tau=0.005, 
+    env=env, 
+    agent=agent,
+    num_episodes=1000, 
+    gamma=0.99, 
+    batch_size=128, 
+    reward_mode="default"
+)
+
+eps_rewards = control.fit()
+
+# plot the results
+import matplotlib.pyplot as plt
+plt.plot(eps_rewards)
+plt.title("Monte-Carlo Control with DQN")
+plt.xlabel("Episode")
+plt.ylabel("Reward")
+plt.show()
+```
 
 ## Contributing
 
@@ -49,22 +96,12 @@ To learn more, see the [Contributor Guide].
 ## License
 
 Distributed under the terms of the [MIT license][license],
-_Reinforcement Learning course's final project._ is free and open source software.
+_Basic Reinforcement Learning Framework._ is free and open-source software.
 
 ## Issues
 
 If you encounter any problems,
 please [file an issue] along with a detailed description.
-
-## Credits
-
-This project was generated from [@cjolowicz]'s [Hypermodern Python Cookiecutter] template.
-
-[@cjolowicz]: https://github.com/cjolowicz
-[pypi]: https://pypi.org/
-[hypermodern python cookiecutter]: https://github.com/cjolowicz/cookiecutter-hypermodern-python
-[file an issue]: https://github.com/ilan-francisco/mo436_final_project/issues
-[pip]: https://pip.pypa.io/
 
 <!-- github-only -->
 
